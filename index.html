@@ -1942,6 +1942,9 @@
       if (key === "cellCount") return `${Math.round(Number(value))}`;
       if (key === "cellGrowStrength") return `${Number(value).toFixed(2)}x`;
       if (key === "cellColor") return colorToRgbaText(value, config.cellOpacity);
+      if (key === "lineStyle") return value === "constellation" ? "星座" : "有机物";
+      if (key === "constellationPointCount") return `${Math.round(Number(value))}`;
+      if (key === "constellationGlow") return `${Math.round(Number(value) * 100)}%`;
       if (key === "trailSpan" || key === "strokeWidth" || key === "sampleRatio" || key === "lineStrokeWidth" || key === "lineCharSize" || key.startsWith("sine")) {
         if (key === "sineLineCount") return `${Math.round(value)}`;
         if (key === "sineColor") return colorToRgbaText(value);
@@ -1956,6 +1959,7 @@
       if (key === "motionColor") return colorToRgbaText(value, config.motionOpacity);
       if (key === "lineColor") return colorToRgbaText(value, config.lineOpacity);
       if (key === "lineCharColor") return colorToRgbaText(value, config.lineCharOpacity);
+      if (key === "constellationContourColor") return colorToRgbaText(value, config.constellationContourOpacity);
       if (typeof value === "string" && parseColorValue(value)) return colorToRgbaText(value);
       if (typeof value === "boolean") return value ? "开" : "关";
       return `${Math.round(value)}`;
@@ -10424,7 +10428,118 @@
 </html>`;
     }
 
+    function generateConstellationLineStandaloneHTML() {
+      const dots = state.constellationPoints.map((point) => ({ x: Number(point.x.toFixed(3)), y: Number(point.y.toFixed(3)) }));
+      const frames = state.lineFrames.map((frame) => ({
+        contourPath: frame.contourPath || state.constellationContourPath,
+        points: frame.points.map((item) => ({ char: item.char, x: Number(item.point.x.toFixed(3)), y: Number(item.point.y.toFixed(3)), baseIndex: item.baseIndex })),
+        connections: frame.connections.map((connection) => ({ d: connection.d || "" })),
+      }));
+      return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${state.fileName.replace(/[<>&"]/g, "")} Constellation Loader</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f7f7f4; font-family: Inter, system-ui, sans-serif; }
+    svg { width: min(72vmin, 560px); height: min(72vmin, 560px); overflow: visible; }
+    text { user-select: none; }
+  </style>
+</head>
+<body>
+  <svg viewBox="0 0 100 100" fill="none" aria-hidden="true">
+    <path id="contour" fill="none" stroke="${config.constellationContourColor}" stroke-width="${config.constellationContourWidth}" opacity="${config.constellationContourOpacity}"></path>
+    <g id="dots"></g>
+    <g id="lines"></g>
+    <g id="chars"></g>
+  </svg>
+  <script>
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const dots = ${JSON.stringify(dots)};
+    const frames = ${JSON.stringify(frames)};
+    const config = ${JSON.stringify({
+      lineFrameIntervalMs: config.lineFrameIntervalMs,
+      lineTransitionMs: config.lineTransitionMs,
+      lineStrokeWidth: config.lineStrokeWidth,
+      lineCharSize: config.lineCharSize,
+      lineColor: config.lineColor,
+      lineOpacity: config.lineOpacity,
+      lineCharColor: config.lineCharColor,
+      lineCharOpacity: config.lineCharOpacity,
+    })};
+    const contour = document.querySelector("#contour");
+    const dotGroup = document.querySelector("#dots");
+    const lineGroup = document.querySelector("#lines");
+    const charGroup = document.querySelector("#chars");
+    dots.forEach((dot) => {
+      const node = document.createElementNS(SVG_NS, "circle");
+      node.setAttribute("cx", dot.x);
+      node.setAttribute("cy", dot.y);
+      node.setAttribute("r", Math.max(0.34, config.lineCharSize * 0.105));
+      node.setAttribute("fill", config.lineCharColor);
+      node.setAttribute("opacity", Math.min(0.42, config.lineCharOpacity * 0.24));
+      dotGroup.appendChild(node);
+    });
+    const paths = [];
+    const texts = [];
+    function ensure(frame) {
+      while (paths.length < frame.connections.length) {
+        const path = document.createElementNS(SVG_NS, "path");
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke-linecap", "round");
+        path.setAttribute("stroke-linejoin", "round");
+        lineGroup.appendChild(path);
+        paths.push(path);
+      }
+      while (texts.length < frame.points.length) {
+        const text = document.createElementNS(SVG_NS, "text");
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("dominant-baseline", "central");
+        text.setAttribute("font-family", "Inter, system-ui, sans-serif");
+        text.setAttribute("font-weight", "700");
+        charGroup.appendChild(text);
+        texts.push(text);
+      }
+    }
+    function draw(frame) {
+      ensure(frame);
+      contour.setAttribute("d", frame.contourPath || "");
+      paths.forEach((path, index) => {
+        const connection = frame.connections[index];
+        path.style.display = connection ? "" : "none";
+        if (!connection) return;
+        path.setAttribute("d", connection.d);
+        path.setAttribute("stroke", config.lineColor);
+        path.setAttribute("stroke-width", config.lineStrokeWidth);
+        path.setAttribute("opacity", config.lineOpacity);
+      });
+      texts.forEach((text, index) => {
+        const point = frame.points[index];
+        text.style.display = point ? "" : "none";
+        if (!point) return;
+        text.textContent = point.char;
+        text.setAttribute("x", point.x);
+        text.setAttribute("y", point.y);
+        text.setAttribute("fill", config.lineCharColor);
+        text.setAttribute("font-size", config.lineCharSize);
+        text.setAttribute("opacity", config.lineCharOpacity);
+      });
+    }
+    function tick(now) {
+      const active = frames.filter((frame) => frame.points.length);
+      if (active.length) draw(active[Math.floor((now / Math.max(300, config.lineFrameIntervalMs)) % active.length)]);
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  <\/script>
+</body>
+</html>`;
+    }
+
     function generateLineStandaloneHTML() {
+      if (config.lineStyle === "constellation") return generateConstellationLineStandaloneHTML();
       const frames = state.lineFrames.map((frame) => ({
         id: frame.id,
         text: frame.text,
