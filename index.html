@@ -860,6 +860,12 @@
       border-radius: 7px;
     }
 
+    .line-edit-tabs[hidden],
+    #line-edit-straight[hidden],
+    #line-edit-curve[hidden] {
+      display: none !important;
+    }
+
     .line-edit-tabs .icon-btn {
       border: 0;
       border-radius: 0;
@@ -2563,6 +2569,8 @@
       delete frame.points;
       delete frame.connections;
       delete frame.connectionsEdited;
+      delete frame.constellationConnections;
+      delete frame.constellationConnectionsEdited;
     }
 
     function syncControlValue(key) {
@@ -7458,6 +7466,21 @@
     }
 
     function renderLineEditFrame() {
+      if (config.lineStyle === "constellation") {
+        const frame = currentLineEditFrame();
+        if (!frame) {
+          finishLineCurveEdit();
+          return;
+        }
+        motionPath.setAttribute("stroke-width", String(config.constellationContourWidth));
+        motionPath.setAttribute("stroke", config.constellationContourColor);
+        motionPath.setAttribute("opacity", String(config.constellationContourOpacity));
+        motionPath.style.filter = constellationGlowFilter(0.65);
+        drawConstellationFrame(frame);
+        renderLineEditHandles(frame);
+        updateLineEditToolbar();
+        return;
+      }
       motionPath.setAttribute("stroke-width", String(config.lineStrokeWidth));
       motionPath.setAttribute("stroke", config.lineColor);
       motionPath.setAttribute("d", state.normalizedContours.length ? buildSmoothSvgMultiPath(state.normalizedContours) : buildPath(1));
@@ -7486,6 +7509,12 @@
       const frame = currentLineEditFrame();
       const configFrame = currentConfigLineFrame();
       if (!frame || !configFrame) return false;
+      if (config.lineStyle === "constellation") {
+        configFrame.constellationConnections = frame.connections.map((connection) => ({ a: connection.a, b: connection.b }));
+        configFrame.constellationConnectionsEdited = true;
+        updateFormulaAndCode();
+        return true;
+      }
       configFrame.points = serializeLineFramePoints(frame.points);
       configFrame.connections = cloneLineConnections(frame.connections);
       configFrame.connectionsEdited = true;
@@ -7517,6 +7546,9 @@
       if (!state.lineEdit) {
         lineEditHint.textContent = "选择两个字符点添加连线";
         lineEditPopover.hidden = true;
+        lineEditTabs.hidden = false;
+        lineEditStraight.hidden = false;
+        lineEditCurve.hidden = false;
         lineEditStraight.disabled = true;
         lineEditCurve.disabled = true;
         lineEditDelete.disabled = true;
@@ -7527,17 +7559,23 @@
       const frame = currentLineEditFrame();
       const selectedConnection = Number.isInteger(state.lineEdit.selectedConnection) ? frame?.connections[state.lineEdit.selectedConnection] : null;
       if (selectedConnection) {
-        lineEditHint.textContent = "可切换线型或删除";
+        lineEditHint.textContent = config.lineStyle === "constellation" ? "可删除连线" : "可切换线型或删除";
         lineEditPopover.hidden = false;
         positionLineEditPopover(frame, selectedConnection, state.lineEdit.selectedConnection);
-        lineEditStraight.disabled = false;
-        lineEditCurve.disabled = false;
+        lineEditTabs.hidden = config.lineStyle === "constellation";
+        lineEditStraight.hidden = config.lineStyle === "constellation";
+        lineEditCurve.hidden = config.lineStyle === "constellation";
+        lineEditStraight.disabled = config.lineStyle === "constellation";
+        lineEditCurve.disabled = config.lineStyle === "constellation";
         lineEditDelete.disabled = false;
         lineEditStraight.classList.toggle("is-active", !selectedConnection.curved);
         lineEditCurve.classList.toggle("is-active", selectedConnection.curved);
       } else if (Number.isInteger(state.lineEdit.selectedPoint)) {
         lineEditHint.textContent = "再选择一个字符点完成连线";
         lineEditPopover.hidden = true;
+        lineEditTabs.hidden = config.lineStyle === "constellation";
+        lineEditStraight.hidden = config.lineStyle === "constellation";
+        lineEditCurve.hidden = config.lineStyle === "constellation";
         lineEditStraight.disabled = true;
         lineEditCurve.disabled = true;
         lineEditDelete.disabled = true;
@@ -7546,6 +7584,9 @@
       } else {
         lineEditHint.textContent = "选择两个字符点添加连线";
         lineEditPopover.hidden = true;
+        lineEditTabs.hidden = config.lineStyle === "constellation";
+        lineEditStraight.hidden = config.lineStyle === "constellation";
+        lineEditCurve.hidden = config.lineStyle === "constellation";
         lineEditStraight.disabled = true;
         lineEditCurve.disabled = true;
         lineEditDelete.disabled = true;
@@ -7847,7 +7888,7 @@
         connection.bendB = bend;
       }
       saveLineEditFrame();
-      drawLineFrame(frame.points, frame.connections);
+      redrawCurrentLineEditFrame(frame);
       renderLineEditHandles(frame);
     }
 
@@ -7865,14 +7906,14 @@
         const b = pointIndex;
         let existingIndex = frame.connections.findIndex((connection) => (connection.a === a && connection.b === b) || (connection.a === b && connection.b === a));
         if (existingIndex < 0) {
-          frame.connections.push(makeManualConnection(a, b, false));
+          frame.connections.push(config.lineStyle === "constellation" ? makeConstellationConnection(a, b, frame.points) : makeManualConnection(a, b, false));
           existingIndex = frame.connections.length - 1;
         }
         state.lineEdit.selectedPoint = null;
         state.lineEdit.selectedConnection = existingIndex;
         saveLineEditFrame();
       }
-      drawLineFrame(frame.points, frame.connections);
+      redrawCurrentLineEditFrame(frame);
       renderLineEditHandles(frame);
       updateLineEditToolbar();
     }
@@ -7895,7 +7936,7 @@
       if (!frame?.connections[connectionIndex]) return;
       state.lineEdit.selectedPoint = null;
       state.lineEdit.selectedConnection = connectionIndex;
-      drawLineFrame(frame.points, frame.connections);
+      redrawCurrentLineEditFrame(frame);
       renderLineEditHandles(frame);
       updateLineEditToolbar();
     }
@@ -7906,7 +7947,7 @@
       if (!frame || !Number.isInteger(index) || !frame.connections[index]) return;
       frame.connections[index].curved = curved;
       saveLineEditFrame();
-      drawLineFrame(frame.points, frame.connections);
+      redrawCurrentLineEditFrame(frame);
       renderLineEditHandles(frame);
       updateLineEditToolbar();
     }
@@ -7918,7 +7959,7 @@
       frame.connections.splice(index, 1);
       state.lineEdit.selectedConnection = null;
       saveLineEditFrame();
-      drawLineFrame(frame.points, frame.connections);
+      redrawCurrentLineEditFrame(frame);
       renderLineEditHandles(frame);
       updateLineEditToolbar();
     }
@@ -7929,10 +7970,15 @@
       state.lineEdit.selectedConnection = null;
       const frame = currentLineEditFrame();
       if (frame) {
-        drawLineFrame(frame.points, frame.connections);
+        redrawCurrentLineEditFrame(frame);
         renderLineEditHandles(frame);
       }
       updateLineEditToolbar();
+    }
+
+    function redrawCurrentLineEditFrame(frame) {
+      if (config.lineStyle === "constellation") drawConstellationFrame(frame);
+      else drawLineFrame(frame.points, frame.connections);
     }
 
     function processCurrentImage() {
@@ -11094,7 +11140,7 @@
       else if (key === "cellDiversity") config[key] = clamp(Math.round(Number(event.target.value)), 0, 5);
       else if (key === "cellOverallSize") config[key] = clamp(Number(event.target.value), 0.55, 1.45);
       else if (key === "cellGrowStrength") config[key] = clamp(Number(event.target.value), 0.2, 1.2);
-      else config[key] = key === "particleCount" || key === "sineLineCount" ? Math.round(Number(event.target.value)) : Number(event.target.value);
+      else config[key] = key === "particleCount" || key === "sineLineCount" || key === "constellationPointCount" ? Math.round(Number(event.target.value)) : Number(event.target.value);
       if (key === "particleStructure" || key === "particleRenderMode") {
         syncParticleTypeFromStyle();
       } else if (key === "particleType") {
@@ -11110,6 +11156,10 @@
       if (key === "pulseCycleMs" && wasPulseGapVisible !== config.pulseCycleMs > 0) renderMotionControls();
       if (key === "oscMode" || key === "oscRefreshMode") renderMotionControls();
       if (key === "morphMotionMode") renderMotionControls();
+      if (key === "lineStyle") {
+        finishLineCurveEdit();
+        renderMotionControls();
+      }
       if (key === "strokeWidth") motionPath.setAttribute("stroke-width", String(config.strokeWidth));
       if (effectBefore === "particle") {
         if (key === "particleType" || key === "particleStructure" || key === "particleRenderMode" || key === "particleSquareMotion") renderMotionControls();
