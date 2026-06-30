@@ -335,6 +335,7 @@
       color: var(--muted);
       background: transparent;
       font-size: 12px;
+      cursor: pointer;
     }
 
     .segment-btn.is-active {
@@ -414,6 +415,24 @@
       min-width: 0;
     }
 
+    .control--toggle .control-head {
+      justify-content: flex-start;
+      gap: 8px;
+    }
+
+    .control--toggle .control-input-row {
+      display: none;
+    }
+
+    .control-checkbox {
+      width: 14px;
+      height: 14px;
+      margin: 0;
+      flex: 0 0 auto;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
     .control-label {
       min-width: 0;
       color: var(--muted);
@@ -435,6 +454,14 @@
     .control--choice .control-value,
     .control--button .control-value {
       display: none;
+    }
+
+    .control--choice {
+      grid-column: 1 / -1;
+    }
+
+    .control--choice .control-input-row {
+      width: 100%;
     }
 
     input[type="range"]:not(.rgba-opacity-slider) {
@@ -482,6 +509,7 @@
 
     .keyframe-editor {
       min-width: 0;
+      grid-column: 1 / -1;
       display: grid;
       gap: 9px;
       padding: 14px 0;
@@ -524,7 +552,7 @@
 
     .oscilloscope-row {
       display: grid;
-      grid-template-columns: 18px repeat(4, minmax(46px, 1fr)) minmax(126px, 1.4fr) 30px;
+      grid-template-columns: 18px repeat(4, minmax(46px, 1fr)) 42px 30px;
       align-items: center;
       gap: 5px;
       min-width: 0;
@@ -628,6 +656,12 @@
       background: var(--accent);
     }
 
+    body[data-theme="light"] .icon-btn.is-active {
+      color: #ffffff;
+      border-color: rgba(17, 24, 39, 0.82);
+      background: #111827;
+    }
+
     input[type="range"] {
       width: 100%;
       margin: 0;
@@ -662,6 +696,16 @@
       gap: 6px;
     }
 
+    .rgba-control--swatch-only {
+      width: 42px;
+      grid-template-columns: 42px;
+    }
+
+    .rgba-control--swatch-only > .rgba-hex,
+    .rgba-control--swatch-only > .rgba-opacity-wrap {
+      display: none;
+    }
+
     .rgba-swatch {
       position: relative;
       width: 34px;
@@ -678,6 +722,10 @@
       background-size: 12px 12px;
       overflow: hidden;
       cursor: pointer;
+    }
+
+    .rgba-control--swatch-only .rgba-swatch {
+      width: 42px;
     }
 
     .rgba-swatch::after {
@@ -725,10 +773,10 @@
     }
 
     .rgba-popover {
-      position: absolute;
-      left: 0;
-      top: calc(100% + 8px);
-      z-index: 80;
+      position: fixed;
+      left: var(--rgba-popover-left, 18px);
+      top: var(--rgba-popover-top, 18px);
+      z-index: 2147483647;
       width: min(320px, calc(100vw - 36px));
       display: none;
       gap: 10px;
@@ -739,11 +787,31 @@
       box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
     }
 
+    body[data-theme="light"] .rgba-popover {
+      border-color: rgba(18, 25, 38, 0.14);
+      background: rgba(255, 255, 255, 0.98);
+      box-shadow: 0 18px 42px rgba(21, 29, 43, 0.18);
+    }
+
+    body[data-theme="light"] .rgba-popover .rgba-field {
+      border-color: rgba(18, 25, 38, 0.16);
+      color: #111827;
+      background: rgba(255, 255, 255, 0.94);
+    }
+
+    body[data-theme="light"] .rgba-popover .rgba-percent {
+      color: rgba(17, 24, 39, 0.58);
+    }
+
+    body[data-theme="light"] .rgba-opacity-slider {
+      accent-color: var(--accent);
+    }
+
     .rgba-control.is-open {
       z-index: 90;
     }
 
-    .rgba-control.is-open .rgba-popover {
+    .rgba-popover.is-open {
       display: grid;
     }
 
@@ -847,6 +915,28 @@
       border-radius: 8px;
       background: rgba(8, 9, 12, 0.92);
       box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    .line-edit-popover .icon-btn {
+      color: rgba(245, 247, 251, 0.9);
+      border-color: rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .line-edit-popover .icon-btn:hover:not(:disabled) {
+      color: #ffffff;
+      border-color: rgba(255, 255, 255, 0.24);
+      background: rgba(255, 255, 255, 0.11);
+    }
+
+    .line-edit-popover .icon-btn:disabled {
+      color: rgba(245, 247, 251, 0.36);
+    }
+
+    .line-edit-popover .icon-btn.is-active {
+      color: #0b1412;
+      border-color: rgba(126, 225, 207, 0.75);
+      background: #67d6c3;
     }
 
     .line-edit-popover[hidden] {
@@ -1346,6 +1436,7 @@
     const motionPath = document.querySelector("#motion-path");
     const lineEditBar = document.querySelector("#line-edit-bar");
     const lineEditPopover = document.querySelector("#line-edit-popover");
+    const lineEditTabs = document.querySelector(".line-edit-tabs");
     const lineEditHint = document.querySelector("#line-edit-hint");
     const lineEditStraight = document.querySelector("#line-edit-straight");
     const lineEditCurve = document.querySelector("#line-edit-curve");
@@ -1436,6 +1527,8 @@
       constellationContourOpacity: 0.28,
       constellationContourWidth: 0.8,
       constellationGlow: 0.24,
+      constellationStaggerMs: 220,
+      constellationFlickerMs: 150,
       lineFrameIntervalMs: 2600,
       lineTransitionMs: 900,
       lineCurveSeed: 1,
@@ -1462,6 +1555,8 @@
       { key: "constellationContourWidth", label: "轮廓粗细", min: 0.3, max: 4, step: 0.1, showWhen: () => config.lineStyle === "constellation", tip: "控制星座样式中底层轮廓线粗细。" },
       { key: "constellationContourColor", alphaKey: "constellationContourOpacity", type: "colorAlpha", label: "轮廓颜色", showWhen: () => config.lineStyle === "constellation", tip: "控制星座样式中底层轮廓线颜色和透明度。" },
       { key: "constellationGlow", label: "光晕", min: 0, max: 1, step: 0.01, showWhen: () => config.lineStyle === "constellation", tip: "给星座样式中的点和线增加光晕，值越大越亮。" },
+      { key: "constellationStaggerMs", label: "时间差", min: 0, max: 900, step: 20, showWhen: () => config.lineStyle === "constellation", tip: "控制星座样式中过渡时不同点和线依次亮起的延迟。" },
+      { key: "constellationFlickerMs", label: "闪烁时长", min: 80, max: 240, step: 10, showWhen: () => config.lineStyle === "constellation", tip: "控制星座样式中单次接触不良闪烁持续多久；每根线会随机闪烁 0 到 2 次。" },
       { key: "lineFrameIntervalMs", label: "时间间隔", min: 900, max: 6000, step: 100, tip: "每隔这段时间切到下一个关键帧，末尾用自定义过渡时长 ease-in-out；最后一帧直接衔接回第一帧。" },
       { key: "lineTransitionMs", label: "过渡时长", min: 600, max: 1500, step: 50, tip: "控制关键帧之间 ease-in-out 过渡的时长。" },
       { key: "lineStrokeWidth", label: "连线粗细", min: 0.6, max: 4, step: 0.1, tip: "控制直线和贝塞尔曲线的线宽。" },
@@ -1597,6 +1692,8 @@
         ],
         tip: "粒子为流动点；点阵为固定网格。",
       },
+      { key: "particleSquareOnColor", alphaKey: "particleSquareOnOpacity", type: "colorAlpha", label: "点阵亮色", showWhen: () => isParticleMatrixMode(), tip: "控制点阵像素亮起时的颜色和透明度。" },
+      { key: "particleSquareOffColor", alphaKey: "particleSquareOffOpacity", type: "colorAlpha", label: "点阵底色", showWhen: () => isParticleMatrixMode(), tip: "控制点阵像素熄灭时的底色和透明度。" },
       {
         key: "particleRenderMode",
         type: "segmented",
@@ -1610,7 +1707,7 @@
       { key: "particleStrengthenEdges", type: "toggle", label: "加强边缘", tip: "开启后，图案边缘附近会得到更高采样权重，内部仍保留少量粒子填充。" },
       { key: "particleFrameIntervalMs", label: "动效周期", min: 0, max: 7000, step: 100, tip: "关键帧之间的间隔。设为 0 时不额外停留，按动效时长连续切换。" },
       { key: "particleTransitionMs", label: "动效时长", min: 400, max: 4000, step: 50, tip: "单次关键帧过渡时长，使用自然 ease 曲线；超过周期时会自动按周期收敛。" },
-      { key: "particleSize", label: "粒子大小", min: 0.45, max: () => isParticleMatrixMode() ? 20 : 3.8, step: 0.05, tip: "控制圆形半径、ASCII 字号或点阵单元尺寸；点阵间距固定为尺寸的 10%。" },
+      { key: "particleSize", label: () => isParticleMatrixMode() ? "点阵大小" : "粒子大小", min: () => isParticleMatrixMode() ? 5 : 0.45, max: () => isParticleMatrixMode() ? 20 : 3.8, step: () => isParticleMatrixMode() ? 1 : 0.05, tip: "粒子模式控制圆形半径或 ASCII 字号；点阵模式控制行/列上的像素数量，例如 5 表示 5x5。" },
       { key: "particleDensity", label: "粒子密度", min: 0.12, max: 1.55, step: 0.01, showWhen: () => !isParticleMatrixMode(), tip: "控制参与形状重组的粒子数量。密度越高，轮廓和内部越完整。" },
       { key: "particleStability", label: "粒子稳定性", min: 0, max: 1, step: 0.01, showWhen: () => !isParticleMatrixMode(), tip: "控制随机漂浮幅度。值越高越贴合目标，值越低越有流体感。" },
       { key: "particleMouseForce", label: "鼠标推力", min: 0, max: 3, step: 0.05, showWhen: () => !isParticleMatrixMode(), tip: "控制鼠标滑过时推开粒子的力度。复原仍保持带阻尼的慢回弹。" },
@@ -1625,8 +1722,6 @@
         ],
         tip: "故障为接触不良式闪烁；扫描会按顺序 sweep 方块状态。",
       },
-      { key: "particleSquareOnColor", alphaKey: "particleSquareOnOpacity", type: "colorAlpha", label: "点阵亮色", showWhen: () => isParticleMatrixMode(), tip: "控制点阵像素亮起时的颜色和透明度。" },
-      { key: "particleSquareOffColor", alphaKey: "particleSquareOffOpacity", type: "colorAlpha", label: "点阵底色", showWhen: () => isParticleMatrixMode(), tip: "控制点阵像素熄灭时的底色和透明度。" },
     ];
 
     const morphControlDefs = [
@@ -1878,15 +1973,15 @@
     let imageMode = "auto";
 
     function isParticleMatrixMode() {
-      return config.particleStructure === "matrix" || config.particleType === "square";
+      return config.particleStructure === "matrix";
     }
 
     function isParticleAsciiMode() {
-      return config.particleRenderMode === "ascii" || config.particleType === "ascii";
+      return config.particleRenderMode === "ascii";
     }
 
     function syncParticleTypeFromStyle() {
-      config.particleType = isParticleMatrixMode() ? "square" : (isParticleAsciiMode() ? "ascii" : "circle");
+      config.particleType = config.particleStructure === "matrix" ? "square" : (config.particleRenderMode === "ascii" ? "ascii" : "circle");
     }
 
     function syncParticleStyleFromType() {
@@ -1905,8 +2000,23 @@
 
     syncParticleStyleFromType();
 
+    function particleMatrixCellCount() {
+      return clamp(Math.round(Number(config.particleSize) || 5), 5, 20);
+    }
+
+    function normalizeParticleSizeForMode() {
+      if (isParticleMatrixMode()) {
+        config.particleSize = particleMatrixCellCount();
+      } else {
+        config.particleSize = clamp(Number(config.particleSize) || particleDefaults.particleSize, 0.45, 3.8);
+      }
+    }
+
+    normalizeParticleSizeForMode();
+
     function formatControlValue(key, value) {
       if (key === "pulseCycleMs" && Number(value) === 0) return "关闭";
+      if (key === "constellationStaggerMs" || key === "constellationFlickerMs") return `${Math.round(Number(value))}ms`;
       if (key.endsWith("Ms")) return `${(value / 1000).toFixed(1)}s`;
       if (key === "pulseGapRatio") return `${Math.round(value * 100)}%`;
       if (key === "oscMode") return value === "parallel" ? "并列" : "转换";
@@ -1924,7 +2034,7 @@
       if (key === "particleSquareOnColor") return colorToRgbaText(value, config.particleSquareOnOpacity);
       if (key === "particleSquareOffColor") return colorToRgbaText(value, config.particleSquareOffOpacity);
       if (key === "particleSquareOnOpacity" || key === "particleSquareOffOpacity") return `${Math.round(Number(value) * 100)}%`;
-      if (key === "particleSize") return Number(value).toFixed(2);
+      if (key === "particleSize") return isParticleMatrixMode() ? `${particleMatrixCellCount()}x${particleMatrixCellCount()}` : Number(value).toFixed(2);
       if (key.startsWith("morph")) {
         if (key === "morphColor") return colorToRgbaText(value, config.morphOpacity);
         if (key === "morphMotionMode") return value === "fusion" ? "融合" : "变形";
@@ -2031,18 +2141,41 @@
       return { ...parts, a: clamp(Number(alpha), 0, 1) };
     }
 
+    let rgbaControlCounter = 0;
+
+    function ensureRgbaControlId(control) {
+      if (!control.dataset.rgbaControlId) control.dataset.rgbaControlId = `rgba-control-${++rgbaControlCounter}`;
+      const popover = control.querySelector(".rgba-popover") || document.querySelector(`.rgba-popover[data-rgba-owner="${control.dataset.rgbaControlId}"]`);
+      if (popover) popover.dataset.rgbaOwner = control.dataset.rgbaControlId;
+      return control.dataset.rgbaControlId;
+    }
+
+    function rgbaPopoverForControl(control) {
+      const id = ensureRgbaControlId(control);
+      return document.querySelector(`.rgba-popover[data-rgba-owner="${id}"]`) || control.querySelector(".rgba-popover");
+    }
+
+    function rgbaControlForTarget(target) {
+      const control = target.closest?.(".rgba-control");
+      if (control) return control;
+      const popover = target.closest?.(".rgba-popover[data-rgba-owner]");
+      if (!popover) return null;
+      return document.querySelector(`.rgba-control[data-rgba-control-id="${popover.dataset.rgbaOwner}"]`);
+    }
+
     function updateRgbaControl(control) {
       const colorKey = control.dataset.colorKey;
       if (!colorKey) return;
       const parts = currentColorPartsForControl(control);
       const text = colorToRgbaText(colorPartsToCss(parts));
       control.style.setProperty("--rgba-preview", text);
+      const popover = rgbaPopoverForControl(control);
       const hexInput = control.querySelector(".rgba-hex");
       const opacityInput = control.querySelector(".rgba-opacity");
-      const picker = control.querySelector(".rgba-picker");
-      const freeInput = control.querySelector(".rgba-input");
-      const popupOpacity = control.querySelector(".rgba-opacity-popup");
-      const slider = control.querySelector(".rgba-opacity-slider");
+      const picker = popover?.querySelector(".rgba-picker");
+      const freeInput = popover?.querySelector(".rgba-input");
+      const popupOpacity = popover?.querySelector(".rgba-opacity-popup");
+      const slider = popover?.querySelector(".rgba-opacity-slider");
       const hex = colorPartsToHex(parts).slice(1).toUpperCase();
       const opacity = String(Math.round(parts.a * 100));
       if (hexInput && document.activeElement !== hexInput) hexInput.value = hex;
@@ -2057,9 +2190,40 @@
       document.querySelectorAll(`.rgba-control[data-color-key="${colorKey}"]`).forEach(updateRgbaControl);
     }
 
-    function renderRgbaControl({ colorKey, alphaKey = "", label, tip, value, opacity = 1, onInput, extraDataset = {} }) {
+    function positionRgbaPopover(control) {
+      const swatch = control.querySelector(".rgba-swatch");
+      const popover = rgbaPopoverForControl(control);
+      if (!swatch || !popover) return;
+      const rect = swatch.getBoundingClientRect();
+      const width = Math.min(320, Math.max(180, window.innerWidth - 36));
+      const left = clamp(rect.left, 18, Math.max(18, window.innerWidth - width - 18));
+      const preferredTop = rect.bottom + 8;
+      const top = preferredTop + 132 > window.innerHeight ? Math.max(18, rect.top - 140) : preferredTop;
+      popover.style.setProperty("--rgba-popover-left", `${left}px`);
+      popover.style.setProperty("--rgba-popover-top", `${top}px`);
+    }
+
+    function closeRgbaControl(control) {
+      const popover = rgbaPopoverForControl(control);
+      control.classList.remove("is-open");
+      popover?.classList.remove("is-open");
+      if (popover && popover.parentElement === document.body) control.appendChild(popover);
+    }
+
+    function openRgbaControl(control) {
+      document.querySelectorAll(".rgba-control.is-open").forEach((item) => {
+        if (item !== control) closeRgbaControl(item);
+      });
+      const popover = rgbaPopoverForControl(control);
+      if (popover && popover.parentElement !== document.body) document.body.appendChild(popover);
+      positionRgbaPopover(control);
+      control.classList.add("is-open");
+      popover?.classList.add("is-open");
+    }
+
+    function renderRgbaControl({ colorKey, alphaKey = "", label, tip, value, opacity = 1, onInput, extraDataset = {}, compact = false }) {
       const control = document.createElement("div");
-      control.className = "rgba-control";
+      control.className = `rgba-control${compact ? " rgba-control--swatch-only" : ""}`;
       control.dataset.colorKey = colorKey;
       control.dataset.colorValue = value;
       if (opacity != null) control.dataset.opacityValue = opacity;
@@ -2088,23 +2252,28 @@
           </div>
         </div>
       `;
+      ensureRgbaControlId(control);
       control.querySelectorAll("input").forEach((input) => input.addEventListener("input", onInput));
       control.addEventListener("click", (event) => {
         if (event.target.closest("[data-rgba-open], .rgba-hex, .rgba-opacity")) {
-          document.querySelectorAll(".rgba-control.is-open").forEach((item) => {
-            if (item !== control) item.classList.remove("is-open");
-          });
-          control.classList.add("is-open");
+          openRgbaControl(control);
         }
       });
-      control.addEventListener("focusin", () => control.classList.add("is-open"));
+      control.addEventListener("focusin", () => openRgbaControl(control));
       updateRgbaControl(control);
       return control;
     }
 
+    window.addEventListener("resize", () => {
+      document.querySelectorAll(".rgba-control.is-open").forEach(positionRgbaPopover);
+    });
+    document.addEventListener("scroll", () => {
+      document.querySelectorAll(".rgba-control.is-open").forEach(positionRgbaPopover);
+    }, true);
+
     document.addEventListener("pointerdown", (event) => {
-      if (event.target.closest(".rgba-control")) return;
-      document.querySelectorAll(".rgba-control.is-open").forEach((control) => control.classList.remove("is-open"));
+      if (event.target.closest(".rgba-control, .rgba-popover")) return;
+      document.querySelectorAll(".rgba-control.is-open").forEach(closeRgbaControl);
     });
 
     function colorPartsFromRgbaControlTarget(target, control) {
@@ -2121,10 +2290,11 @@
 
     function markRgbaControlValidity(control, valid) {
       control.querySelectorAll(".rgba-field").forEach((field) => field.classList.toggle("is-invalid", !valid));
+      rgbaPopoverForControl(control)?.querySelectorAll(".rgba-field").forEach((field) => field.classList.toggle("is-invalid", !valid));
     }
 
     function handleRgbaInput(target, onApply) {
-      const control = target.closest(".rgba-control");
+      const control = rgbaControlForTarget(target);
       if (!control) return false;
       const colorKey = control.dataset.colorKey;
       const alphaKey = control.dataset.alphaKey || "";
@@ -2151,7 +2321,10 @@
         button.dataset.key = control.key;
         button.dataset.optionValue = option.value;
         button.title = control.tip;
-        button.addEventListener("click", onInput);
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          onInput(event);
+        });
         segmented.appendChild(button);
       });
       return segmented;
@@ -2166,6 +2339,10 @@
       input.style.setProperty("--range-progress", `${clamp(progress, 0, 100)}%`);
     }
 
+    function controlLabel(control) {
+      return typeof control.label === "function" ? control.label() : control.label;
+    }
+
     function renderControls(container, defs, onInput, clear = true) {
       if (clear) container.innerHTML = "";
       defs.forEach((control) => {
@@ -2174,9 +2351,10 @@
         label.className = "control";
         label.title = control.tip;
         label.dataset.tip = control.tip;
+        const labelText = controlLabel(control);
         label.innerHTML = `
           <div class="control-head">
-            <span class="control-label" title="${control.tip}">${control.label}</span>
+            <span class="control-label" title="${control.tip}">${labelText}</span>
             <span class="control-value" data-value-key="${control.key}">${formatControlValue(control.key, config[control.key])}</span>
           </div>
           <div class="control-input-row"></div>
@@ -2250,21 +2428,95 @@
           container.appendChild(label);
           return;
         } else if (control.type === "toggle") {
+          label.classList.add("control--toggle");
           input.type = "checkbox";
+          input.className = "control-checkbox";
           input.checked = Boolean(config[control.key]);
+          label.querySelector(".control-value")?.remove();
         } else {
           input.type = "range";
           input.min = typeof control.min === "function" ? control.min() : control.min;
           input.max = typeof control.max === "function" ? control.max() : control.max;
-          input.step = control.step;
+          input.step = typeof control.step === "function" ? control.step() : control.step;
           input.value = config[control.key];
           updateRangeProgress(input);
         }
-        input.addEventListener("input", (event) => {
+        let lastHandledValue = String(input.value);
+        let rangeTrackingFrame = 0;
+        let rangePointerActive = false;
+        const quantizeRangeValue = (value) => {
+          const min = Number(input.min || 0);
+          const max = Number(input.max || 100);
+          const step = Number(input.step || 1);
+          const clamped = clamp(value, min, max);
+          if (!Number.isFinite(step) || step <= 0) return clamped;
+          const steps = Math.round((clamped - min) / step);
+          const precision = Math.max(0, (String(input.step).split(".")[1] || "").length);
+          return Number((min + steps * step).toFixed(precision));
+        };
+        const setRangeValueFromPointer = (event) => {
+          if (input.type !== "range" || !Number.isFinite(event.clientX)) return false;
+          const rect = input.getBoundingClientRect();
+          if (!rect.width) return false;
+          const min = Number(input.min || 0);
+          const max = Number(input.max || 100);
+          const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+          input.value = String(quantizeRangeValue(min + ratio * (max - min)));
+          return true;
+        };
+        const handleControlEvent = (event, force = false) => {
           updateRangeProgress(input);
+          const nextValue = String(input.value);
+          if (!force && nextValue === lastHandledValue) return;
+          lastHandledValue = nextValue;
           onInput(event);
-        });
-        row.appendChild(input);
+        };
+        const stopRangeTracking = () => {
+          rangePointerActive = false;
+          if (rangeTrackingFrame) cancelAnimationFrame(rangeTrackingFrame);
+          rangeTrackingFrame = 0;
+          handleControlEvent({ target: input, currentTarget: input }, false);
+        };
+        const startRangeTracking = () => {
+          if (rangeTrackingFrame) return;
+          const tick = () => {
+            if (!input.isConnected) {
+              rangeTrackingFrame = 0;
+              return;
+            }
+            handleControlEvent({ target: input, currentTarget: input }, false);
+            rangeTrackingFrame = requestAnimationFrame(tick);
+          };
+          rangeTrackingFrame = requestAnimationFrame(tick);
+        };
+        input.addEventListener("input", (event) => handleControlEvent(event, true));
+        input.addEventListener("change", handleControlEvent);
+        if (input.type === "range") {
+          input.addEventListener("pointerdown", (event) => {
+            rangePointerActive = true;
+            input.setPointerCapture?.(event.pointerId);
+            if (setRangeValueFromPointer(event)) handleControlEvent(event, true);
+            startRangeTracking();
+          });
+          input.addEventListener("pointermove", (event) => {
+            if (!rangePointerActive) return;
+            if (setRangeValueFromPointer(event)) handleControlEvent(event, true);
+          });
+          input.addEventListener("click", (event) => {
+            if (setRangeValueFromPointer(event)) handleControlEvent(event, true);
+          });
+          ["mousemove", "pointerup", "mouseup", "touchmove", "touchend", "keyup"].forEach((eventName) => {
+            input.addEventListener(eventName, (event) => handleControlEvent(event));
+          });
+          ["pointerup", "pointercancel", "lostpointercapture", "mouseup", "touchend", "blur"].forEach((eventName) => {
+            input.addEventListener(eventName, stopRangeTracking);
+          });
+        }
+        if (input.type === "checkbox") {
+          label.querySelector(".control-label")?.before(input);
+        } else {
+          row.appendChild(input);
+        }
         container.appendChild(label);
       });
     }
@@ -2288,8 +2540,12 @@
         row.innerHTML = `
           <span class="keyframe-index">${index + 1}</span>
           <input class="keyframe-input" data-keyframe-id="${frame.id}" value="${escapeHtml(frame.text)}" aria-label="关键帧 ${index + 1}">
-          <button class="icon-btn${state.lineEdit?.frameId === frame.id ? " is-active" : ""}" type="button" data-keyframe-action="edit" data-keyframe-id="${frame.id}" aria-label="编辑关键帧 ${index + 1} 曲线">✎</button>
-          <button class="icon-btn" type="button" data-keyframe-action="delete" data-keyframe-id="${frame.id}" aria-label="删除关键帧 ${index + 1}">×</button>
+          <button class="icon-btn${state.lineEdit?.frameId === frame.id ? " is-active" : ""}" type="button" data-keyframe-action="edit" data-keyframe-id="${frame.id}" aria-label="编辑关键帧 ${index + 1} 曲线">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4"></path><path d="M14.5 4.5 19.5 9.5"></path><path d="M6 18 17.5 6.5a2.1 2.1 0 0 1 3 3L9 21H6z"></path></svg>
+          </button>
+          <button class="icon-btn" type="button" data-keyframe-action="delete" data-keyframe-id="${frame.id}" aria-label="删除关键帧 ${index + 1}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"></path><path d="M9 7V5h6v2"></path><path d="M7 7l1 13h8l1-13"></path></svg>
+          </button>
         `;
         list.appendChild(row);
       });
@@ -2363,8 +2619,9 @@
           label: `图形 ${index + 1} 颜色`,
           tip: "支持 rgba(r, g, b, a) 与 HEX 输入。",
           value: figure.color,
+          compact: true,
           onInput: (event) => {
-            const control = event.target.closest(".rgba-control");
+            const control = rgbaControlForTarget(event.target);
             const parts = colorPartsFromRgbaControlTarget(event.target, control);
             markRgbaControlValidity(control, Boolean(parts));
             if (!parts) return;
@@ -2511,7 +2768,7 @@
           tip: "支持 rgba(r, g, b, a) 与 HEX 输入。",
           value: item.color,
           onInput: (event) => {
-            const control = event.target.closest(".rgba-control");
+            const control = rgbaControlForTarget(event.target);
             const parts = colorPartsFromRgbaControlTarget(event.target, control);
             markRgbaControlValidity(control, Boolean(parts));
             if (!parts) return;
@@ -2577,6 +2834,10 @@
       delete frame.constellationConnectionsEdited;
     }
 
+    function resetLineReferenceGeometry() {
+      config.lineKeyframes.forEach(resetLineFrameGeometry);
+    }
+
     function syncControlValue(key) {
       document.querySelectorAll(`[data-value-key="${key}"]`).forEach((node) => {
         node.textContent = formatControlValue(key, config[key]);
@@ -2618,10 +2879,16 @@
         });
         syncRgbaControls("lineCharColor");
       }
+      if (key === "constellationContourOpacity") {
+        document.querySelectorAll(`[data-value-key="constellationContourColor"]`).forEach((node) => {
+          node.textContent = formatControlValue("constellationContourColor", config.constellationContourColor);
+        });
+        syncRgbaControls("constellationContourColor");
+      }
       document.querySelectorAll(`input[data-key="${key}"]`).forEach((node) => {
         if (node.type === "checkbox") node.checked = Boolean(config[key]);
         else node.value = config[key];
-        if (node.type === "range") updateKnob(node);
+        if (node.type === "range") updateRangeProgress(node);
       });
     }
 
@@ -3253,6 +3520,21 @@
       });
     }
 
+    function applyPointCloudDensity(contours, ratio, simplifyPointCount) {
+      const valid = contours.filter((contour) => contour.length >= 3);
+      if (!valid.length) return [];
+      const density = clamp(Number(ratio) || 0.18, 0.04, 0.28);
+      const totalTarget = Math.round(24 + density * 920);
+      const lengths = valid.map(pathLength);
+      const totalLength = lengths.reduce((sum, length) => sum + length, 0) || 1;
+      const minPerContour = Math.max(8, Math.ceil(Math.round(simplifyPointCount) / valid.length));
+      return valid.map((contour, index) => {
+        const share = lengths[index] / totalLength;
+        const target = Math.max(minPerContour, Math.round(totalTarget * share));
+        return resampleClosed(contour, target);
+      });
+    }
+
     function smoothPath(points, windowSize) {
       const size = Math.max(1, Math.round(windowSize));
       if (size <= 1 || points.length < size) return points.slice();
@@ -3622,6 +3904,14 @@
         console.error(error);
       }
       state.animationFrame = requestAnimationFrame(render);
+    }
+
+    function refreshPreviewNow() {
+      try {
+        activeEffect().render(performance.now());
+      } catch (error) {
+        console.error(error);
+      }
     }
 
     function renderFlowEffect(now) {
@@ -4590,19 +4880,24 @@
     }
 
     function particleSquarePixelSize(ratio = window.devicePixelRatio || 1) {
-      return Math.max(1.25, config.particleSize * 4.4 * ratio);
+      const viewport = state.particleSystem.viewport;
+      const cells = particleMatrixCellCount();
+      const cellPercent = 100 / (cells + (cells - 1) * 0.1);
+      return Math.max(1.25, viewport.size * cellPercent / 100);
     }
 
     function particleSquareGridSpec() {
       const viewport = state.particleSystem.viewport;
       const ratio = window.devicePixelRatio || 1;
+      const cells = particleMatrixCellCount();
+      const cellPercent = 100 / (cells + (cells - 1) * 0.1);
+      const stepPercent = cellPercent * 1.1;
       const sidePx = particleSquarePixelSize(ratio);
-      const stepPercent = (sidePx * 1.1 / Math.max(1, viewport.size)) * 100;
-      const columns = Math.max(2, Math.floor(100 / Math.max(0.1, stepPercent)) + 1);
-      const rows = Math.max(2, Math.floor(100 / Math.max(0.1, stepPercent)) + 1);
-      const startX = 50 - ((columns - 1) * stepPercent) / 2;
-      const startY = 50 - ((rows - 1) * stepPercent) / 2;
-      return { columns, rows, count: columns * rows, stepPercent, sidePx, startX, startY };
+      const columns = cells;
+      const rows = cells;
+      const startX = cellPercent / 2;
+      const startY = cellPercent / 2;
+      return { columns, rows, count: columns * rows, stepPercent, cellPercent, sidePx, startX, startY };
     }
 
     function particleGridPoint(index, spec) {
@@ -4635,14 +4930,14 @@
     function getParticleSquareGridStates(mix) {
       const system = state.particleSystem;
       const spec = particleSquareGridSpec();
-      const key = `${mix.index}|${state.particleSquareFrames.length}|${spec.columns}|${spec.rows}|${spec.stepPercent.toFixed(4)}|${config.particleSize}`;
+      const key = `${mix.index}|${state.particleSquareFrames.length}|${spec.columns}|${spec.rows}|${spec.stepPercent.toFixed(4)}|${spec.cellPercent.toFixed(4)}`;
       if (system.squareCache?.key === key) return system.squareCache.states;
       const currentFrame = state.particleSquareFrames[mix.index] ?? null;
       const nextFrame = state.particleSquareFrames[(mix.index + 1) % Math.max(1, state.particleSquareFrames.length)] ?? currentFrame;
       const states = Array.from({ length: spec.count }, (_, index) => {
         const point = particleGridPoint(index, spec);
-        const currentAlpha = particleSquareFrameLit(point, currentFrame, spec.stepPercent);
-        const nextAlpha = particleSquareFrameLit(point, nextFrame, spec.stepPercent);
+        const currentAlpha = particleSquareFrameLit(point, currentFrame, spec.cellPercent);
+        const nextAlpha = particleSquareFrameLit(point, nextFrame, spec.cellPercent);
         return {
           x: point.x,
           y: point.y,
@@ -6685,7 +6980,7 @@
         });
       });
       const bounds = contourBounds(contours);
-      const rng = seededRandom(`constellation-points|${state.fileName}|${target}|${config.simplifyPointCount}|${config.harmonicCount}`);
+      const rng = seededRandom(`constellation-points|${state.fileName}|${target}|${config.constellationPointCount}|${config.simplifyPointCount}|${config.harmonicCount}`);
       const idealGap = constellationPointDistributionGap(target, bounds);
       let guard = 0;
       while (points.length < target && guard < target * 180) {
@@ -6731,7 +7026,7 @@
 
     function chooseConstellationFramePoints(chars, frameId, frameIndex) {
       if (!chars.length || !state.constellationPoints.length) return [];
-      const order = chooseSpreadConstellationBaseIndices(chars.length, `constellation-order|${frameId}|${frameIndex}|${chars.join("")}|${config.lineCurveSeed}`);
+      const order = chooseSpreadConstellationBaseIndices(chars.length, `constellation-order|${frameId}|${frameIndex}|${chars.join("")}|${config.constellationPointCount}|${config.simplifyPointCount}|${config.harmonicCount}|${config.lineCurveSeed}`);
       return chars.slice(0, state.constellationPoints.length).map((char, index) => {
         const baseIndex = order[index % order.length];
         const base = state.constellationPoints[baseIndex];
@@ -6878,7 +7173,7 @@
     }
 
     function constellationEndpointRadius() {
-      return Math.max(2.4, config.lineCharSize);
+      return Math.max(0, Number(config.lineCharSize) || 0);
     }
 
     function buildClippedConstellationPath(points, blockers) {
@@ -6971,7 +7266,7 @@
       const progress = frameLocal < hold ? 0 : standardBezierEase((frameLocal - hold) / transition);
       const current = frames[segment] ?? frames[0];
       const next = frames[nextIndex] ?? current;
-      if (progress > 0 && progress < 1) drawConstellationTransition(current, next, progress);
+      if (progress > 0 && progress < 1) drawConstellationTransition(current, next, progress, transition);
       else drawConstellationFrame(progress <= 0 ? current : next);
     }
 
@@ -6999,37 +7294,41 @@
       drawConstellationTexts(frame.points, 0, 1, 1);
     }
 
-    function drawConstellationTransition(current, next, progress) {
+    function drawConstellationTransition(current, next, progress, transitionMs) {
       const currentLines = current.connections.length;
       const nextLines = next.connections.length;
       drawConstellationBase(currentLines + nextLines, current.points.length + next.points.length, progress < 0.5 ? current.contourPath : next.contourPath);
       current.connections.forEach((connection, index) => {
-        const local = constellationLineLocalProgress(progress, index, currentLines);
-        drawConstellationConnection(state.linePaths[index], current.points, connection, 1 - local, index, (1 - local) * constellationFlicker(local, index));
+        const local = constellationItemLocalProgress(progress, index, currentLines, transitionMs);
+        const flicker = constellationFlicker(local, index, false, transitionMs);
+        drawConstellationConnection(state.linePaths[index], current.points, connection, (1 - local) * constellationFlickerDrawFraction(flicker), index, (1 - local) * flicker, constellationBlackout(local, index, false, transitionMs));
       });
       next.connections.forEach((connection, index) => {
-        const local = constellationLineLocalProgress(progress, index, nextLines);
-        drawConstellationConnection(state.linePaths[currentLines + index], next.points, connection, local, index, local * constellationFlicker(local, index + currentLines));
+        const local = constellationItemLocalProgress(progress, index, nextLines, transitionMs);
+        const flicker = constellationFlicker(local, index + currentLines, true, transitionMs);
+        drawConstellationConnection(state.linePaths[currentLines + index], next.points, connection, local * constellationFlickerDrawFraction(flicker), index, local * flicker, constellationBlackout(local, index + currentLines, true, transitionMs));
       });
-      highlightConstellationDots(current.points, 1 - progress);
-      highlightConstellationDots(next.points, progress);
-      drawConstellationTexts(current.points, 0, 1 - progress, 1 - progress);
-      drawConstellationTexts(next.points, current.points.length, progress, progress);
+      highlightConstellationDots(current.points, (point, index) => 1 - constellationItemLocalProgress(progress, index, current.points.length, transitionMs));
+      highlightConstellationDots(next.points, (point, index) => constellationItemLocalProgress(progress, index, next.points.length, transitionMs));
+      drawConstellationTexts(current.points, 0, (point, index) => 1 - constellationItemLocalProgress(progress, index, current.points.length, transitionMs));
+      drawConstellationTexts(next.points, current.points.length, (point, index) => constellationItemLocalProgress(progress, index, next.points.length, transitionMs));
     }
 
     function highlightConstellationDots(points, amount) {
       const radius = Math.max(0.34, config.lineCharSize * 0.105);
-      points.forEach((point) => {
+      points.forEach((point, index) => {
+        const value = typeof amount === "function" ? amount(point, index) : amount;
         const dot = state.constellationDots[point.baseIndex];
         if (!dot) return;
         dot.setAttribute("r", radius.toFixed(2));
-        dot.setAttribute("opacity", String(Math.max(0, Math.min(0.42, config.lineCharOpacity * 0.24) * (1 - amount))));
-        dot.style.filter = amount > 0.01 ? "" : constellationGlowFilter(0.42);
+        dot.setAttribute("opacity", String(Math.max(0, Math.min(0.42, config.lineCharOpacity * 0.24) * (1 - value))));
+        dot.style.filter = value > 0.01 ? "" : constellationGlowFilter(0.42);
       });
     }
 
-    function drawConstellationTexts(points, offset, opacity, scale) {
+    function drawConstellationTexts(points, offset, opacity) {
       points.forEach((point, index) => {
+        const value = typeof opacity === "function" ? opacity(point, index) : opacity;
         const text = state.lineTexts[index + offset];
         if (!text) return;
         text.style.display = "";
@@ -7037,13 +7336,13 @@
         text.setAttribute("x", point.point.x.toFixed(2));
         text.setAttribute("y", point.point.y.toFixed(2));
         text.setAttribute("fill", config.lineCharColor);
-        text.setAttribute("font-size", String(config.lineCharSize * (0.48 + 0.52 * scale)));
-        text.setAttribute("opacity", (config.lineCharOpacity * opacity).toFixed(3));
+        text.setAttribute("font-size", String(config.lineCharSize));
+        text.setAttribute("opacity", (config.lineCharOpacity * value).toFixed(3));
         text.style.filter = constellationGlowFilter(1);
       });
     }
 
-    function drawConstellationConnection(path, points, connection, fraction, index, opacityScale) {
+    function drawConstellationConnection(path, points, connection, fraction, index, opacityScale, blackout = false) {
       const a = points[connection.a];
       const b = points[connection.b];
       if (!path || !a || !b) {
@@ -7056,6 +7355,7 @@
         return;
       }
       path.style.display = "";
+      path.style.visibility = blackout ? "hidden" : "visible";
       path.dataset.connectionIndex = String(index);
       path.classList.toggle("is-selected", false);
       path.setAttribute("d", d);
@@ -7072,24 +7372,49 @@
       return `drop-shadow(0 0 ${(2 + value * 8).toFixed(1)}px ${config.lineColor})`;
     }
 
-    function constellationLineLocalProgress(progress, index, total) {
+    function constellationItemLocalProgress(progress, index, total, transitionMs = config.lineTransitionMs) {
       const count = Math.max(1, total);
-      const delay = count <= 1 ? 0 : (index / (count - 1)) * 0.26;
-      return clamp((progress - delay) / 0.74, 0, 1);
+      const staggerRatio = clamp((Number(config.constellationStaggerMs) || 0) / Math.max(1, transitionMs), 0, 0.62);
+      const delay = count <= 1 ? 0 : (index / (count - 1)) * staggerRatio;
+      return standardBezierEase(clamp((progress - delay) / Math.max(0.001, 1 - staggerRatio), 0, 1));
     }
 
-    function constellationFlicker(progress, index = 0) {
+    function constellationFlashSpec(index = 0, transitionMs = config.lineTransitionMs) {
+      const rng = seededRandom(`constellation-flicker|${index}|${Math.round(Number(config.lineCurveSeed) || 0)}`);
+      const count = Math.floor(rng() * 3);
+      const durationRatio = clamp((Number(config.constellationFlickerMs) || 150) / Math.max(1, transitionMs), 0.04, 0.45);
+      if (count <= 0) return { centers: [], durationRatio };
+      if (count === 1) return { centers: [0.24 + rng() * 0.46], durationRatio };
+      const first = 0.18 + rng() * 0.22;
+      const second = Math.max(first + durationRatio * 1.35, 0.54 + rng() * 0.24);
+      return { centers: [first, Math.min(0.82, second)], durationRatio };
+    }
+
+    function constellationFlicker(progress, index = 0, appearing = true, transitionMs = config.lineTransitionMs) {
       const t = clamp(progress, 0, 1);
       if (t <= 0 || t >= 1) return 1;
-      const flashCount = index % 3 === 0 ? 1 : 2;
-      const centers = flashCount === 1 ? [0.34] : [0.22, 0.52];
+      const spec = constellationFlashSpec(index, transitionMs);
       let value = 1;
-      centers.forEach((center, centerIndex) => {
-        const shifted = center + ((index * 17 + centerIndex * 11) % 7 - 3) * 0.006;
-        const pulse = Math.max(0, 1 - Math.abs(t - shifted) / 0.075);
-        value *= 1 - pulse * 0.58;
+      const softWidth = spec.durationRatio * (appearing ? 0.72 : 0.64);
+      spec.centers.forEach((center) => {
+        const distance = Math.abs(t - center);
+        if (distance >= softWidth) return;
+        const pulse = 1 - standardBezierEase(distance / Math.max(0.001, softWidth));
+        value *= 1 - pulse * (appearing ? 0.94 : 0.84);
       });
-      return clamp(value, 0.34, 1);
+      return clamp(value, appearing ? 0.015 : 0.05, 1);
+    }
+
+    function constellationFlickerDrawFraction(flicker) {
+      return clamp(0.82 + flicker * 0.18, 0.82, 1);
+    }
+
+    function constellationBlackout(progress, index = 0, appearing = true, transitionMs = config.lineTransitionMs) {
+      const t = clamp(progress, 0, 1);
+      if (t <= 0.04 || t >= 0.96) return false;
+      const spec = constellationFlashSpec(index, transitionMs);
+      const halfWidth = spec.durationRatio * (appearing ? 0.22 : 0.18);
+      return spec.centers.some((center) => Math.abs(t - center) < halfWidth);
     }
 
     function interpolateLineFrame(current, next, progress) {
@@ -7247,6 +7572,7 @@
       };
       const curved = currentConnection.curved || nextConnection.curved;
       path.style.display = "";
+      path.style.visibility = "visible";
       path.dataset.connectionIndex = String(index);
       path.classList.toggle("is-selected", false);
       path.setAttribute("d", curved
@@ -7312,6 +7638,7 @@
         return;
       }
       path.style.display = "";
+      path.style.visibility = "visible";
       path.dataset.connectionIndex = String(index);
       const selected = Boolean(state.lineEdit && state.lineEdit.selectedConnection === index);
       path.classList.toggle("is-selected", selected);
@@ -7372,7 +7699,7 @@
         if (!endpoints) return null;
         return { ...center, start: endpoints.start, end: endpoints.end };
       }
-      const gap = Math.min(Math.max(2.2, config.lineCharSize * 0.62), Math.hypot(b.x - a.x, b.y - a.y) * 0.35);
+      const gap = connectionEndpointGap(a, b);
       const startT = approximateCubicTAtDistance(center.start, center.c1, center.c2, center.end, gap, false);
       const endT = approximateCubicTAtDistance(center.start, center.c1, center.c2, center.end, gap, true);
       return trimCubicSegment(center.start, center.c1, center.c2, center.end, startT, endT);
@@ -7383,13 +7710,18 @@
       const dy = b.y - a.y;
       const length = Math.hypot(dx, dy);
       if (length === 0) return { start: a, end: b };
-      const gap = Math.min(Math.max(2.2, config.lineCharSize * 0.62), length * 0.35);
+      const gap = connectionEndpointGap(a, b);
       const ux = dx / length;
       const uy = dy / length;
       return {
         start: { x: a.x + ux * gap, y: a.y + uy * gap },
         end: { x: b.x - ux * gap, y: b.y - uy * gap },
       };
+    }
+
+    function connectionEndpointGap(a, b) {
+      const length = Math.hypot(b.x - a.x, b.y - a.y);
+      return Math.min(Math.max(0, Number(config.lineCharSize) || 0), length * 0.45);
     }
 
     function approximateCubicTAtDistance(p0, c1, c2, p1, distance, fromEnd) {
@@ -7992,6 +8324,7 @@
         state.startedAt = performance.now();
         updateMeta();
         updateFormulaAndCode();
+        refreshPreviewNow();
         return;
       }
       if (!state.imageData) {
@@ -8007,8 +8340,9 @@
         const segments = field.kind === "edges" ? contourSegmentsFromScalar(scalar, width, height, config.threshold) : [];
         state.paths = field.kind === "edges" ? [contourPathFromSegments(segments, width, height)] : contourPathsFromMask(field, config.threshold);
         state.paths = state.paths.filter((path) => path.length >= 3);
+        state.paths = applyPointCloudDensity(state.paths, config.sampleRatio, config.simplifyPointCount);
         state.path = state.paths[0] ?? [];
-        state.rawData = field.kind === "edges" ? contourPointCloud(segments, width, height) : state.paths.flat();
+        state.rawData = state.paths.flat();
         config.smoothWindow = automaticSmoothWindow(state.rawData.length, mode);
         state.treeSamples = deterministicSample(state.path, config.sampleRatio);
         if (state.path.length < 8) state.path = state.treeSamples.length >= 8 ? treePathFromSamples(state.treeSamples) : makeFallbackShape();
@@ -8021,11 +8355,13 @@
         if (!state.simplifiedContours.length) state.simplifiedContours = [state.simplified];
         state.normalizedContours = normalizeContours(state.simplifiedContours);
         state.normalized = state.normalizedContours[0] ?? normalizePoints(state.simplified);
+        if (config.effectType === "line") resetLineReferenceGeometry();
         activeEffect().prepare();
         state.startedAt = performance.now();
         updateMeta();
         drawMiniCanvases();
         updateFormulaAndCode();
+        refreshPreviewNow();
         setStatus("Ready");
       } catch (error) {
         console.error(error);
@@ -8039,6 +8375,7 @@
         updateMeta();
         drawMiniCanvases();
         updateFormulaAndCode();
+        refreshPreviewNow();
         setStatus("Ready");
       }
     }
@@ -9915,7 +10252,7 @@
     const config = ${JSON.stringify({
       particleFrameIntervalMs: config.particleFrameIntervalMs,
       particleTransitionMs: config.particleTransitionMs,
-      particleSize: config.particleSize,
+      particleSize: isParticleMatrixMode() ? particleMatrixCellCount() : config.particleSize,
       particleStability: config.particleStability,
       particleMouseForce: config.particleMouseForce,
       particleSquareOnColor: config.particleSquareOnColor,
@@ -9937,8 +10274,9 @@
     let squareCache = { key: "", states: [] };
     const startedAt = performance.now();
     function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
-    function isMatrixMode() { return config.particleStructure === "matrix" || config.particleType === "square"; }
-    function isAsciiMode() { return config.particleRenderMode === "ascii" || config.particleType === "ascii"; }
+    function isMatrixMode() { return config.particleStructure === "matrix"; }
+    function isAsciiMode() { return config.particleRenderMode === "ascii"; }
+    function matrixCellCount() { return clamp(Math.round(Number(config.particleSize) || 5), 5, 20); }
     function decodeSquareFrame(frame) {
       if (!frame) return null;
       const mask = new Uint8Array(frame.width * frame.height);
@@ -10071,22 +10409,25 @@
       return { current: frames[index] || [], next: frames[(index + 1) % frames.length] || frames[index] || [], progress, index };
     }
     function squarePixelSize(ratio = window.devicePixelRatio || 1) {
-      return Math.max(1.25, config.particleSize * 4.4 * ratio);
+      const cells = matrixCellCount();
+      const cellPercent = 100 / (cells + (cells - 1) * 0.1);
+      return Math.max(1.25, viewport.size * cellPercent / 100);
     }
     function squareGridSpec() {
       const ratio = window.devicePixelRatio || 1;
+      const cells = matrixCellCount();
+      const cellPercent = 100 / (cells + (cells - 1) * 0.1);
+      const stepPercent = cellPercent * 1.1;
       const sidePx = squarePixelSize(ratio);
-      const stepPercent = (sidePx * 1.1 / Math.max(1, viewport.size)) * 100;
-      const columns = Math.max(2, Math.floor(100 / Math.max(0.1, stepPercent)) + 1);
-      const rows = Math.max(2, Math.floor(100 / Math.max(0.1, stepPercent)) + 1);
       return {
-        columns,
-        rows,
-        count: columns * rows,
+        columns: cells,
+        rows: cells,
+        count: cells * cells,
         stepPercent,
+        cellPercent,
         sidePx,
-        startX: 50 - ((columns - 1) * stepPercent) / 2,
-        startY: 50 - ((rows - 1) * stepPercent) / 2,
+        startX: cellPercent / 2,
+        startY: cellPercent / 2,
       };
     }
     function gridPoint(index, spec) {
@@ -10133,14 +10474,14 @@
     }
     function squareGridStates(mix) {
       const spec = squareGridSpec();
-      const key = mix.index + "|" + squareFrames.length + "|" + spec.columns + "|" + spec.rows + "|" + spec.stepPercent.toFixed(4) + "|" + config.particleSize;
+      const key = mix.index + "|" + squareFrames.length + "|" + spec.columns + "|" + spec.rows + "|" + spec.stepPercent.toFixed(4) + "|" + spec.cellPercent.toFixed(4);
       if (squareCache.key === key) return squareCache.states;
       const currentFrame = squareFrames[mix.index] || null;
       const nextFrame = squareFrames[(mix.index + 1) % Math.max(1, squareFrames.length)] || currentFrame;
       const states = Array.from({ length: spec.count }, (_, index) => {
         const point = gridPoint(index, spec);
-        const currentAlpha = squareFrameLit(point, currentFrame, spec.stepPercent);
-        const nextAlpha = squareFrameLit(point, nextFrame, spec.stepPercent);
+        const currentAlpha = squareFrameLit(point, currentFrame, spec.cellPercent);
+        const nextAlpha = squareFrameLit(point, nextFrame, spec.cellPercent);
         return {
           x: point.x,
           y: point.y,
@@ -10468,6 +10809,8 @@
       lineOpacity: config.lineOpacity,
       lineCharColor: config.lineCharColor,
       lineCharOpacity: config.lineCharOpacity,
+      constellationStaggerMs: config.constellationStaggerMs,
+      constellationFlickerMs: config.constellationFlickerMs,
     })};
     const contour = document.querySelector("#contour");
     const dotGroup = document.querySelector("#dots");
@@ -10503,33 +10846,157 @@
         texts.push(text);
       }
     }
+    function setPathDrawFraction(path, fraction) {
+      const value = Math.max(0, Math.min(1, fraction));
+      try {
+        const length = path.getTotalLength();
+        path.style.strokeDasharray = String(length);
+        path.style.strokeDashoffset = String(length * (1 - value));
+      } catch (error) {
+        path.style.strokeDasharray = "";
+        path.style.strokeDashoffset = "";
+      }
+    }
+    function cubicBezierAxis(t, p1, p2) {
+      const inv = 1 - t;
+      return 3 * inv * inv * t * p1 + 3 * inv * t * t * p2 + t * t * t;
+    }
+    function standardBezierEase(value) {
+      const target = Math.max(0, Math.min(1, value));
+      let low = 0;
+      let high = 1;
+      let t = target;
+      for (let i = 0; i < 14; i += 1) {
+        t = (low + high) / 2;
+        const x = cubicBezierAxis(t, 0.5, 0);
+        if (x < target) low = t;
+        else high = t;
+      }
+      return cubicBezierAxis(t, 0, 1);
+    }
+    function seededRandom(seed) {
+      let hash = 2166136261;
+      const text = String(seed);
+      for (let i = 0; i < text.length; i += 1) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return function () {
+        hash += 0x6D2B79F5;
+        let value = hash;
+        value = Math.imul(value ^ (value >>> 15), value | 1);
+        value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+        return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    function localProgress(progress, index, total, transitionMs) {
+      const count = Math.max(1, total);
+      const staggerRatio = Math.max(0, Math.min(0.62, (Number(config.constellationStaggerMs) || 0) / Math.max(1, transitionMs)));
+      const delay = count <= 1 ? 0 : (index / (count - 1)) * staggerRatio;
+      return standardBezierEase(Math.max(0, Math.min(1, (progress - delay) / Math.max(0.001, 1 - staggerRatio))));
+    }
+    function flashSpec(index, transitionMs) {
+      const rng = seededRandom("constellation-flicker|" + index);
+      const count = Math.floor(rng() * 3);
+      const durationRatio = Math.max(0.04, Math.min(0.45, (Number(config.constellationFlickerMs) || 150) / Math.max(1, transitionMs)));
+      if (count <= 0) return { centers: [], durationRatio };
+      if (count === 1) return { centers: [0.24 + rng() * 0.46], durationRatio };
+      const first = 0.18 + rng() * 0.22;
+      const second = Math.max(first + durationRatio * 1.35, 0.54 + rng() * 0.24);
+      return { centers: [first, Math.min(0.82, second)], durationRatio };
+    }
+    function flicker(progress, index, appearing) {
+      const t = Math.max(0, Math.min(1, progress));
+      if (t <= 0 || t >= 1) return 1;
+      const spec = flashSpec(index, Math.max(1, config.lineTransitionMs));
+      let value = 1;
+      const softWidth = spec.durationRatio * (appearing ? 0.72 : 0.64);
+      spec.centers.forEach((center) => {
+        const distance = Math.abs(t - center);
+        if (distance >= softWidth) return;
+        const pulse = 1 - standardBezierEase(distance / Math.max(0.001, softWidth));
+        value *= 1 - pulse * (appearing ? 0.94 : 0.84);
+      });
+      return Math.max(appearing ? 0.015 : 0.05, Math.min(1, value));
+    }
+    function blackout(progress, index, appearing) {
+      const t = Math.max(0, Math.min(1, progress));
+      if (t <= 0.04 || t >= 0.96) return false;
+      const spec = flashSpec(index, Math.max(1, config.lineTransitionMs));
+      const halfWidth = spec.durationRatio * (appearing ? 0.22 : 0.18);
+      return spec.centers.some((center) => Math.abs(t - center) < halfWidth);
+    }
+    function drawConnection(path, connection, fraction, opacity, hidden) {
+      if (!connection) {
+        path.style.display = "none";
+        return;
+      }
+      path.style.display = "";
+      path.style.visibility = hidden ? "hidden" : "visible";
+      path.setAttribute("d", connection.d);
+      path.setAttribute("stroke", config.lineColor);
+      path.setAttribute("stroke-width", config.lineStrokeWidth);
+      path.setAttribute("opacity", Math.max(0, Math.min(1, config.lineOpacity * opacity)));
+      setPathDrawFraction(path, fraction);
+    }
+    function drawText(text, point, opacity) {
+      if (!point) {
+        text.style.display = "none";
+        return;
+      }
+      text.style.display = "";
+      text.textContent = point.char;
+      text.setAttribute("x", point.x);
+      text.setAttribute("y", point.y);
+      text.setAttribute("fill", config.lineCharColor);
+      text.setAttribute("font-size", config.lineCharSize);
+      text.setAttribute("opacity", Math.max(0, Math.min(1, config.lineCharOpacity * opacity)));
+    }
     function draw(frame) {
       ensure(frame);
       contour.setAttribute("d", frame.contourPath || "");
       paths.forEach((path, index) => {
         const connection = frame.connections[index];
-        path.style.display = connection ? "" : "none";
-        if (!connection) return;
-        path.setAttribute("d", connection.d);
-        path.setAttribute("stroke", config.lineColor);
-        path.setAttribute("stroke-width", config.lineStrokeWidth);
-        path.setAttribute("opacity", config.lineOpacity);
+        drawConnection(path, connection, 1, 1, false);
       });
       texts.forEach((text, index) => {
-        const point = frame.points[index];
-        text.style.display = point ? "" : "none";
-        if (!point) return;
-        text.textContent = point.char;
-        text.setAttribute("x", point.x);
-        text.setAttribute("y", point.y);
-        text.setAttribute("fill", config.lineCharColor);
-        text.setAttribute("font-size", config.lineCharSize);
-        text.setAttribute("opacity", config.lineCharOpacity);
+        drawText(text, frame.points[index], 1);
       });
+    }
+    function drawTransition(current, next, progress, transitionMs) {
+      ensure({
+        contourPath: progress < 0.5 ? current.contourPath : next.contourPath,
+        connections: current.connections.concat(next.connections),
+        points: current.points.concat(next.points),
+      });
+      contour.setAttribute("d", progress < 0.5 ? current.contourPath || "" : next.contourPath || "");
+      const currentLines = current.connections.length;
+      current.connections.forEach((connection, index) => {
+        const local = localProgress(progress, index, currentLines, transitionMs);
+        const spark = flicker(local, index, false);
+        drawConnection(paths[index], connection, (1 - local) * (0.82 + spark * 0.18), (1 - local) * spark, blackout(local, index, false));
+      });
+      next.connections.forEach((connection, index) => {
+        const local = localProgress(progress, index, next.connections.length, transitionMs);
+        const spark = flicker(local, index + currentLines, true);
+        drawConnection(paths[currentLines + index], connection, local * (0.82 + spark * 0.18), local * spark, blackout(local, index + currentLines, true));
+      });
+      current.points.forEach((point, index) => drawText(texts[index], point, 1 - localProgress(progress, index, current.points.length, transitionMs)));
+      next.points.forEach((point, index) => drawText(texts[current.points.length + index], point, localProgress(progress, index, next.points.length, transitionMs)));
     }
     function tick(now) {
       const active = frames.filter((frame) => frame.points.length);
-      if (active.length) draw(active[Math.floor((now / Math.max(300, config.lineFrameIntervalMs)) % active.length)]);
+      if (active.length) {
+        const transition = Math.max(80, Number(config.lineTransitionMs) || 900);
+        const interval = Math.max(transition + 120, Number(config.lineFrameIntervalMs) || 2600);
+        const segment = Math.floor(now / interval) % active.length;
+        const frameLocal = now % interval;
+        const hold = Math.max(0, interval - transition);
+        const current = active[segment];
+        const next = active[(segment + 1) % active.length];
+        if (frameLocal < hold) draw(current);
+        else drawTransition(current, next, standardBezierEase((frameLocal - hold) / transition), transition);
+      }
       requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
@@ -10670,13 +11137,17 @@
       const dy = b.y - a.y;
       const length = Math.hypot(dx, dy);
       if (length === 0) return { start: a, end: b };
-      const gap = Math.min(Math.max(2.2, config.lineCharSize * 0.62), length * 0.35);
+      const gap = connectionEndpointGap(a, b);
       const ux = dx / length;
       const uy = dy / length;
       return {
         start: { x: a.x + ux * gap, y: a.y + uy * gap },
         end: { x: b.x - ux * gap, y: b.y - uy * gap },
       };
+    }
+    function connectionEndpointGap(a, b) {
+      const length = Math.hypot(b.x - a.x, b.y - a.y);
+      return Math.min(Math.max(0, Number(config.lineCharSize) || 0), length * 0.45);
     }
     function linePath(a, b, connection) {
       const controls = visibleConnectionControlPoints(a, b, connection);
@@ -10710,7 +11181,7 @@
         if (!endpoints) return null;
         return { ...center, start: endpoints.start, end: endpoints.end };
       }
-      const gap = Math.min(Math.max(2.2, config.lineCharSize * 0.62), Math.hypot(b.x - a.x, b.y - a.y) * 0.35);
+      const gap = connectionEndpointGap(a, b);
       const startT = approximateCubicTAtDistance(center.start, center.c1, center.c2, center.end, gap, false);
       const endT = approximateCubicTAtDistance(center.start, center.c1, center.c2, center.end, gap, true);
       return trimCubicSegment(center.start, center.c1, center.c2, center.end, startT, endT);
@@ -11066,6 +11537,50 @@
       return motionEffects[config.effectType] ?? motionEffects.flow;
     }
 
+    function shouldRestartMotionForKey(key) {
+      return new Set([
+        "durationMs",
+        "pulseDurationMs",
+        "pulseCycleMs",
+        "lineFrameIntervalMs",
+        "lineTransitionMs",
+        "particleFrameIntervalMs",
+        "particleTransitionMs",
+        "morphFrameIntervalMs",
+        "morphTransitionMs",
+        "oscMorphHoldMs",
+        "oscMorphTransitionMs",
+        "oscParallelIntervalMs",
+        "oscParallelSpinMs",
+        "oscStaggerMs",
+        "cellMotionDurationMs",
+        "cellMotionIntervalMs",
+      ]).has(key);
+    }
+
+    function previewConstellationTransitionPhase() {
+      if (config.effectType !== "line" || config.lineStyle !== "constellation") return false;
+      const interval = Math.max(300, Number(config.lineFrameIntervalMs) || 300);
+      const transition = Math.min(Math.max(600, Number(config.lineTransitionMs) || 600), interval);
+      const hold = Math.max(0, interval - transition);
+      state.startedAt = performance.now() - hold - transition * 0.46;
+      return true;
+    }
+
+    function applyConstellationPointCountChange() {
+      if (config.effectType !== "line" || config.lineStyle !== "constellation") return false;
+      config.lineKeyframes.forEach((frame) => {
+        delete frame.constellationConnections;
+        delete frame.constellationConnectionsEdited;
+      });
+      prepareLineEffect();
+      if (!state.lineEdit) previewConstellationTransitionPhase();
+      updateMeta();
+      updateFormulaAndCode();
+      refreshPreviewNow();
+      return true;
+    }
+
     function cloneDefaults(defaults) {
       return JSON.parse(JSON.stringify(defaults));
     }
@@ -11081,6 +11596,27 @@
       activeEffect().prepare();
       state.startedAt = performance.now();
       updateFormulaAndCode();
+      refreshPreviewNow();
+    }
+
+    function switchActiveEffect(effectType) {
+      state.lineEdit = null;
+      state.lineEditDrag = null;
+      lineEditBar.hidden = true;
+      lineEditPopover.hidden = true;
+      hideLineEditHandles();
+      config.effectType = effectType;
+      renderMotionControls();
+      const effect = activeEffect();
+      if (effect.hideImageOptions || effect.hasParticleKeyframes || config.effectType === "cell") {
+        effect.prepare();
+        state.startedAt = performance.now();
+        updateMeta();
+        updateFormulaAndCode();
+        refreshPreviewNow();
+      } else {
+        processCurrentImage();
+      }
     }
 
     chooseBtn.addEventListener("click", () => fileInput.click());
@@ -11101,13 +11637,7 @@
       processCurrentImage();
     });
     effectSelect.addEventListener("change", () => {
-      state.lineEdit = null;
-      state.lineEditDrag = null;
-      lineEditBar.hidden = true;
-      hideLineEditHandles();
-      config.effectType = effectSelect.value;
-      resetActiveEffect();
-      processCurrentImage();
+      switchActiveEffect(effectSelect.value);
     });
     resetMotion.addEventListener("click", resetActiveEffect);
     if (copyFormula && formulaEl) copyFormula.addEventListener("click", () => copyText(formulaEl.textContent, copyFormula));
@@ -11202,14 +11732,18 @@
     });
 
     function handleImageControlInput(event) {
-      const key = event.target.dataset.key;
+      const keyedTarget = event.target.closest?.("[data-key]");
+      const key = event.target.dataset.key || keyedTarget?.dataset.key;
+      if (!key) return;
       config[key] = key === "harmonicCount" || key === "simplifyPointCount" ? Math.round(Number(event.target.value)) : Number(event.target.value);
       syncControlValue(key);
       processCurrentImage();
     }
 
     function handleMotionControlInput(event) {
-      const key = event.target.dataset.key;
+      const keyedTarget = event.target.closest?.("[data-key]");
+      const key = event.target.dataset.key || keyedTarget?.dataset.key;
+      if (!key && !event.target.closest?.(".rgba-control, .rgba-popover")) return;
       const wasPulseGapVisible = config.pulseCycleMs > 0;
       const effectBefore = config.effectType;
       const finalizeColorChange = (colorKey, alphaKey) => {
@@ -11225,18 +11759,20 @@
           }
           updateMeta();
           updateFormulaAndCode();
+          refreshPreviewNow();
           return;
         }
         if (effectBefore === "morph") {
           state.morphSystem.lastFrameAt = null;
           updateMeta();
           updateFormulaAndCode();
+          refreshPreviewNow();
           return;
         }
         activeEffect().prepare();
-        state.startedAt = performance.now();
         updateMeta();
         updateFormulaAndCode();
+        refreshPreviewNow();
       };
       if (handleRgbaInput(event.target, finalizeColorChange)) return;
       if (key === "cellRandomize") {
@@ -11245,6 +11781,7 @@
         state.startedAt = performance.now();
         updateMeta();
         updateFormulaAndCode();
+        refreshPreviewNow();
         return;
       }
       if (event.target.type === "checkbox") config[key] = event.target.checked;
@@ -11261,8 +11798,9 @@
       } else if (key === "particleType") {
         syncParticleStyleFromType();
       }
-      if (!isParticleMatrixMode()) {
-        config.particleSize = clamp(config.particleSize, 0.45, 3.8);
+      normalizeParticleSizeForMode();
+      if (key === "particleStructure") {
+        state.particleSystem.squareCache = { key: "", states: [] };
       }
       syncControlValue(key);
       if (event.target.dataset.colorKey) syncControlValue(event.target.dataset.colorKey);
@@ -11275,15 +11813,19 @@
         finishLineCurveEdit();
         renderMotionControls();
       }
+      if (key === "constellationPointCount") {
+        if (applyConstellationPointCountChange()) return;
+      }
+      if (key === "constellationStaggerMs" || key === "constellationFlickerMs") {
+        previewConstellationTransitionPhase();
+      }
       if (key === "strokeWidth") motionPath.setAttribute("stroke-width", String(config.strokeWidth));
       if (effectBefore === "particle") {
         if (key === "particleType" || key === "particleStructure" || key === "particleRenderMode" || key === "particleSquareMotion") renderMotionControls();
-        let deferredParticlePrepare = false;
         if (key === "particleType" || key === "particleStructure" || key === "particleRenderMode") {
           prepareParticleEffect();
         } else if (key === "particleDensity" || key === "particleStrengthenEdges") {
-          scheduleParticlePrepare();
-          deferredParticlePrepare = true;
+          prepareParticleEffect();
         } else if (key === "particleSize" || key === "particleStability" || key === "particleMouseForce" || key === "particleSquareOnColor" || key === "particleSquareOnOpacity" || key === "particleSquareOffColor" || key === "particleSquareOffOpacity" || key === "particleSquareMotion" || key === "particleFrameIntervalMs" || key === "particleTransitionMs" || key === "particleType") {
           state.particleSystem.lastFrameAt = null;
         } else {
@@ -11291,7 +11833,8 @@
         }
         if (key === "particleFrameIntervalMs" || key === "particleTransitionMs") state.startedAt = performance.now();
         updateMeta();
-        if (!deferredParticlePrepare) updateFormulaAndCode();
+        updateFormulaAndCode();
+        refreshPreviewNow();
         return;
       }
       if (effectBefore === "morph") {
@@ -11303,12 +11846,14 @@
         if (key === "morphFrameIntervalMs" || key === "morphTransitionMs" || key === "morphMotionMode") state.startedAt = performance.now();
         updateMeta();
         updateFormulaAndCode();
+        refreshPreviewNow();
         return;
       }
       activeEffect().prepare();
-      state.startedAt = performance.now();
+      if (shouldRestartMotionForKey(key) && !previewConstellationTransitionPhase()) state.startedAt = performance.now();
       updateMeta();
       updateFormulaAndCode();
+      refreshPreviewNow();
     }
 
     function renderMotionControls() {
@@ -11329,8 +11874,14 @@
       motionControls.innerHTML = "";
       if (effect.hasKeyframes) renderLineKeyframeEditor(motionControls);
       if (effect.hasOscilloscopeFigures) renderOscilloscopeFigureEditor(motionControls);
-      if (effect.hasParticleColors && !isParticleMatrixMode()) renderParticleColorEditor(motionControls);
-      renderControls(motionControls, effect.controls, handleMotionControlInput, false);
+      if (config.effectType === "particle") {
+        renderControls(motionControls, effect.controls.slice(0, 1), handleMotionControlInput, false);
+        if (!isParticleMatrixMode()) renderParticleColorEditor(motionControls);
+        renderControls(motionControls, effect.controls.slice(1), handleMotionControlInput, false);
+      } else {
+        if (effect.hasParticleColors && !isParticleMatrixMode()) renderParticleColorEditor(motionControls);
+        renderControls(motionControls, effect.controls, handleMotionControlInput, false);
+      }
     }
 
     renderMotionControls();
