@@ -2,7 +2,7 @@
 var puzzleDefaults = {
   puzzleMotionDurationMs: 1150,
   puzzleMotionIntervalMs: 2400,
-  puzzleStrokeWidth: 0.32,
+  puzzleStrokeWidth: 0.16,
   puzzleStrokeColor: "#8F959E",
   puzzleStrokeOpacity: 0.96,
 };
@@ -10,7 +10,7 @@ var puzzleDefaults = {
 var puzzleControlDefs = [
   { key: "puzzleMotionDurationMs", label: "动效时长", min: 450, max: 2800, step: 50, tip: "控制一次插入、旋转、居中和淡出的总时长。" },
   { key: "puzzleMotionIntervalMs", label: "动效间隔", min: 800, max: 5200, step: 100, tip: "控制新拼图出现的周期。" },
-  { key: "puzzleStrokeWidth", label: "线框粗细", min: 0.08, max: 1.4, step: 0.02, tip: "控制拼图线框的描边宽度。描边会压在拼图轮廓内部。" },
+  { key: "puzzleStrokeWidth", label: "线框粗细", min: 0.03, max: 0.72, step: 0.01, tip: "控制拼图线框的描边宽度。描边会压在拼图轮廓内部。" },
   { key: "puzzleStrokeColor", alphaKey: "puzzleStrokeOpacity", type: "colorAlpha", label: "线框颜色", tip: "控制拼图线框颜色和透明度。" },
 ];
 
@@ -18,6 +18,13 @@ var puzzleDirections = {
   top: { x: 0, y: -1, angle: -Math.PI / 2, opposite: "bottom" },
   right: { x: 1, y: 0, angle: 0, opposite: "left" },
   bottom: { x: 0, y: 1, angle: Math.PI / 2, opposite: "top" },
+};
+
+var puzzleAllDirections = {
+  top: { x: 0, y: -1 },
+  right: { x: 1, y: 0 },
+  bottom: { x: 0, y: 1 },
+  left: { x: -1, y: 0 },
 };
 
 var puzzleOppositeSide = {
@@ -72,14 +79,11 @@ function puzzleEnsureCycle(cycle) {
 function puzzleNextState(previous, cycle) {
   const beforePieces = previous.pieces.map(puzzleClonePiece);
   const active = beforePieces.find((piece) => piece.id === previous.activeId) || beforePieces[beforePieces.length - 1];
-  const directionName = puzzleChooseDirection(active, beforePieces, cycle);
-  if (!active.sides[directionName]) active.sides[directionName] = seededRandom(`puzzle-forced-side|${cycle}`)() > 0.5 ? 1 : -1;
+  const insertion = puzzleChooseInsertion(active, beforePieces, previous.nextId, cycle);
+  const directionName = insertion.directionName;
   const direction = puzzleDirections[directionName];
   const targetAngle = -direction.angle;
-  const newPiece = puzzleCreatePiece(previous.nextId, puzzleOppositeSide[directionName], -active.sides[directionName]);
-  newPiece.x = active.x + direction.x;
-  newPiece.y = active.y + direction.y;
-  newPiece.angle = active.angle;
+  const newPiece = insertion.newPiece;
   const combined = [...beforePieces, newPiece];
   const target = puzzleRotatePoint({ x: newPiece.x, y: newPiece.y }, targetAngle);
   const transformed = combined.map((piece) => {
@@ -105,18 +109,88 @@ function puzzleNextState(previous, cycle) {
 }
 
 function puzzleChooseDirection(active, pieces, cycle) {
+  return puzzleChooseInsertion(active, pieces, Number(active.id || 1) + cycle + 1, cycle).directionName;
+}
+
+function puzzleChooseInsertion(active, pieces, nextId, cycle) {
   const occupied = new Set(pieces.filter((piece) => piece.id !== active.id).map((piece) => `${Math.round(piece.x - active.x)},${Math.round(piece.y - active.y)}`));
-  const available = ["right", "top", "bottom"].filter((side) => {
-    const dir = puzzleDirections[side];
-    return active.sides[side] && !occupied.has(`${dir.x},${dir.y}`);
-  });
-  const candidates = available.length ? available : ["right", "top", "bottom"].filter((side) => {
-    const dir = puzzleDirections[side];
+  const choices = ["right", "top", "bottom"]
+    .map((directionName) => ({
+      directionName,
+      sort: seededRandom(`puzzle-direction|${cycle}|${active.id}|${directionName}`)(),
+    }))
+    .sort((a, b) => a.sort - b.sort);
+  for (const choice of choices) {
+    const dir = puzzleDirections[choice.directionName];
+    if (occupied.has(`${dir.x},${dir.y}`)) continue;
+    const newPiece = puzzleBuildMatchingPiece(nextId, active, pieces, choice.directionName);
+    if (newPiece && puzzleValidateContacts([...pieces, newPiece])) return { directionName: choice.directionName, newPiece };
+  }
+  const fallbackDirection = choices.find((choice) => {
+    const dir = puzzleDirections[choice.directionName];
     return !occupied.has(`${dir.x},${dir.y}`);
+  })?.directionName || "right";
+  return {
+    directionName: fallbackDirection,
+    newPiece: puzzleBuildMatchingPiece(nextId, active, pieces, fallbackDirection, true),
+  };
+}
+
+function puzzleBuildMatchingPiece(id, active, pieces, directionName, force = false) {
+  const direction = puzzleDirections[directionName];
+  const newPiece = puzzleCreatePiece(id, null, 1);
+  newPiece.x = active.x + direction.x;
+  newPiece.y = active.y + direction.y;
+  newPiece.angle = active.angle;
+  const constraints = [];
+  pieces.forEach((neighbor) => {
+    const neighborDirection = puzzleDirectionBetween(newPiece, neighbor);
+    if (!neighborDirection) return;
+    const newLocalSide = puzzleLocalSideForWorld(newPiece, neighborDirection);
+    const neighborLocalSide = puzzleLocalSideForWorld(neighbor, puzzleOppositeSide[neighborDirection]);
+    const neighborValue = neighbor.sides[neighborLocalSide];
+    if (!neighborValue) return;
+    constraints.push({ side: newLocalSide, value: -neighborValue });
   });
-  const safe = candidates.length ? candidates : ["right"];
-  const index = Math.floor(seededRandom(`puzzle-direction|${cycle}|${active.id}`)() * safe.length) % safe.length;
-  return safe[index];
+  const seen = new Map();
+  for (const constraint of constraints) {
+    const current = seen.get(constraint.side);
+    if (current != null && current !== constraint.value && !force) return null;
+    seen.set(constraint.side, constraint.value);
+  }
+  seen.forEach((value, side) => { newPiece.sides[side] = value; });
+  return newPiece;
+}
+
+function puzzleValidateContacts(pieces) {
+  for (let i = 0; i < pieces.length; i += 1) {
+    for (let j = i + 1; j < pieces.length; j += 1) {
+      const direction = puzzleDirectionBetween(pieces[i], pieces[j]);
+      if (!direction) continue;
+      const aSide = puzzleLocalSideForWorld(pieces[i], direction);
+      const bSide = puzzleLocalSideForWorld(pieces[j], puzzleOppositeSide[direction]);
+      if (!pieces[i].sides[aSide] || !pieces[j].sides[bSide]) return false;
+      if (pieces[i].sides[aSide] + pieces[j].sides[bSide] !== 0) return false;
+    }
+  }
+  return true;
+}
+
+function puzzleDirectionBetween(from, to) {
+  const dx = Math.round(to.x - from.x);
+  const dy = Math.round(to.y - from.y);
+  return Object.entries(puzzleAllDirections).find(([, dir]) => dir.x === dx && dir.y === dy)?.[0] || null;
+}
+
+function puzzleLocalSideForWorld(piece, worldSide) {
+  const worldIndex = ["top", "right", "bottom", "left"].indexOf(worldSide);
+  const turns = puzzleQuarterTurns(piece.angle || 0);
+  return ["top", "right", "bottom", "left"][((worldIndex - turns) % 4 + 4) % 4];
+}
+
+function puzzleQuarterTurns(angle) {
+  const quarter = Math.PI / 2;
+  return ((Math.round(angle / quarter) % 4) + 4) % 4;
 }
 
 function renderPuzzleEffect(now) {
@@ -176,7 +250,7 @@ function puzzleDrawPieces(ctx, pieces) {
   const viewport = state.particleSystem.viewport;
   const size = 17.5;
   const spacing = size;
-  const visibleStrokeWidth = Math.max(0.08, Number(config.puzzleStrokeWidth) || 0.32) * (viewport.size / 100);
+  const visibleStrokeWidth = Math.max(0.03, Number(config.puzzleStrokeWidth) || 0.16) * (viewport.size / 100);
   ctx.save();
   ctx.lineWidth = visibleStrokeWidth * 2;
   ctx.strokeStyle = config.puzzleStrokeColor;
@@ -206,8 +280,8 @@ function puzzleDrawPieces(ctx, pieces) {
 
 function puzzleTracePiece(ctx, size, sides) {
   const half = size / 2;
-  const knob = size * 0.18;
-  const span = size * 0.3;
+  const knob = size * 0.22;
+  const span = size * 0.46;
   ctx.beginPath();
   ctx.moveTo(-half, -half);
   puzzleTraceHorizontal(ctx, -half, half, -half, sides.top || 0, -1, knob, span);
@@ -222,13 +296,15 @@ function puzzleTraceHorizontal(ctx, fromX, toX, y, connector, outwardY, knob, sp
   const mid = (fromX + toX) / 2;
   const a = mid - span / 2 * dir;
   const b = mid + span / 2 * dir;
+  const neck = span * 0.22;
   ctx.lineTo(a, y);
   if (!connector) {
     ctx.lineTo(b, y);
   } else {
     const depth = knob * outwardY * connector;
-    ctx.bezierCurveTo(a + span * 0.18 * dir, y, a + span * 0.18 * dir, y + depth, mid, y + depth);
-    ctx.bezierCurveTo(b - span * 0.18 * dir, y + depth, b - span * 0.18 * dir, y, b, y);
+    ctx.bezierCurveTo(a + neck * 0.54 * dir, y, a + neck * 0.54 * dir, y + depth * 0.46, mid - neck * 0.32 * dir, y + depth * 0.58);
+    ctx.bezierCurveTo(mid - neck * 0.72 * dir, y + depth, mid + neck * 0.72 * dir, y + depth, mid + neck * 0.32 * dir, y + depth * 0.58);
+    ctx.bezierCurveTo(b - neck * 0.54 * dir, y + depth * 0.46, b - neck * 0.54 * dir, y, b, y);
   }
   ctx.lineTo(toX, y);
 }
@@ -238,13 +314,15 @@ function puzzleTraceVertical(ctx, x, fromY, toY, connector, outwardX, knob, span
   const mid = (fromY + toY) / 2;
   const a = mid - span / 2 * dir;
   const b = mid + span / 2 * dir;
+  const neck = span * 0.22;
   ctx.lineTo(x, a);
   if (!connector) {
     ctx.lineTo(x, b);
   } else {
     const depth = knob * outwardX * connector;
-    ctx.bezierCurveTo(x, a + span * 0.18 * dir, x + depth, a + span * 0.18 * dir, x + depth, mid);
-    ctx.bezierCurveTo(x + depth, b - span * 0.18 * dir, x, b - span * 0.18 * dir, x, b);
+    ctx.bezierCurveTo(x, a + neck * 0.54 * dir, x + depth * 0.46, a + neck * 0.54 * dir, x + depth * 0.58, mid - neck * 0.32 * dir);
+    ctx.bezierCurveTo(x + depth, mid - neck * 0.72 * dir, x + depth, mid + neck * 0.72 * dir, x + depth * 0.58, mid + neck * 0.32 * dir);
+    ctx.bezierCurveTo(x + depth * 0.46, b - neck * 0.54 * dir, x, b - neck * 0.54 * dir, x, b);
   }
   ctx.lineTo(x, toY);
 }
@@ -252,8 +330,8 @@ function puzzleTraceVertical(ctx, x, fromY, toY, connector, outwardX, knob, span
 function puzzlePiecePolyline(piece, size = 17.5) {
   const points = [];
   const half = size / 2;
-  const knob = size * 0.18;
-  const span = size * 0.3;
+  const knob = size * 0.22;
+  const span = size * 0.46;
   const add = (x, y) => points.push({ x, y });
   const addHorizontal = (fromX, toX, y, connector, outwardY) => {
     const dir = Math.sign(toX - fromX) || 1;
@@ -322,6 +400,7 @@ const config = ${JSON.stringify(standaloneConfig)};
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const puzzleDirections = ${JSON.stringify(puzzleDirections)};
+const puzzleAllDirections = ${JSON.stringify(puzzleAllDirections)};
 const puzzleOppositeSide = ${JSON.stringify(puzzleOppositeSide)};
 let viewport = { x: 0, y: 0, size: 1 };
 let startedAt = performance.now();
@@ -433,12 +512,11 @@ function puzzleEnsureCycle(cycle) {
 function puzzleNextState(previous, cycle) {
   const before = previous.pieces.map(puzzleClonePiece);
   const active = before.find((piece) => piece.id === previous.activeId) || before[before.length - 1];
-  const directionName = puzzleChooseDirection(active, before, cycle);
-  if (!active.sides[directionName]) active.sides[directionName] = seededRandom("puzzle-forced-side|" + cycle)() > 0.5 ? 1 : -1;
+  const insertion = puzzleChooseInsertion(active, before, previous.nextId, cycle);
+  const directionName = insertion.directionName;
   const direction = puzzleDirections[directionName];
   const targetAngle = -direction.angle;
-  const newPiece = puzzleCreatePiece(previous.nextId, puzzleOppositeSide[directionName], -active.sides[directionName]);
-  newPiece.x = active.x + direction.x; newPiece.y = active.y + direction.y; newPiece.angle = active.angle;
+  const newPiece = insertion.newPiece;
   const combined = [...before, newPiece];
   const target = puzzleRotatePoint({ x: newPiece.x, y: newPiece.y }, targetAngle);
   const transformed = combined.map((piece) => {
@@ -449,11 +527,69 @@ function puzzleNextState(previous, cycle) {
   return { before, newPiece, targetAngle, target, oldestId: oldest && oldest.id, after: { pieces: oldest ? transformed.filter((piece) => piece.id !== oldest.id) : transformed, activeId: newPiece.id, nextId: previous.nextId + 1 } };
 }
 function puzzleChooseDirection(active, pieces, cycle) {
+  return puzzleChooseInsertion(active, pieces, Number(active.id || 1) + cycle + 1, cycle).directionName;
+}
+function puzzleChooseInsertion(active, pieces, nextId, cycle) {
   const occupied = new Set(pieces.filter((piece) => piece.id !== active.id).map((piece) => Math.round(piece.x - active.x) + "," + Math.round(piece.y - active.y)));
-  const available = ["right", "top", "bottom"].filter((side) => active.sides[side] && !occupied.has(puzzleDirections[side].x + "," + puzzleDirections[side].y));
-  const candidates = available.length ? available : ["right", "top", "bottom"].filter((side) => !occupied.has(puzzleDirections[side].x + "," + puzzleDirections[side].y));
-  const safe = candidates.length ? candidates : ["right"];
-  return safe[Math.floor(seededRandom("puzzle-direction|" + cycle + "|" + active.id)() * safe.length) % safe.length];
+  const choices = ["right", "top", "bottom"].map((directionName) => ({ directionName, sort: seededRandom("puzzle-direction|" + cycle + "|" + active.id + "|" + directionName)() })).sort((a, b) => a.sort - b.sort);
+  for (const choice of choices) {
+    const dir = puzzleDirections[choice.directionName];
+    if (occupied.has(dir.x + "," + dir.y)) continue;
+    const newPiece = puzzleBuildMatchingPiece(nextId, active, pieces, choice.directionName);
+    if (newPiece && puzzleValidateContacts([...pieces, newPiece])) return { directionName: choice.directionName, newPiece };
+  }
+  const fallbackDirection = (choices.find((choice) => {
+    const dir = puzzleDirections[choice.directionName];
+    return !occupied.has(dir.x + "," + dir.y);
+  }) || choices[0] || { directionName: "right" }).directionName;
+  return { directionName: fallbackDirection, newPiece: puzzleBuildMatchingPiece(nextId, active, pieces, fallbackDirection, true) };
+}
+function puzzleBuildMatchingPiece(id, active, pieces, directionName, force) {
+  const direction = puzzleDirections[directionName];
+  const newPiece = puzzleCreatePiece(id, null, 1);
+  newPiece.x = active.x + direction.x;
+  newPiece.y = active.y + direction.y;
+  newPiece.angle = active.angle;
+  const seen = new Map();
+  for (const neighbor of pieces) {
+    const neighborDirection = puzzleDirectionBetween(newPiece, neighbor);
+    if (!neighborDirection) continue;
+    const newLocalSide = puzzleLocalSideForWorld(newPiece, neighborDirection);
+    const neighborLocalSide = puzzleLocalSideForWorld(neighbor, puzzleOppositeSide[neighborDirection]);
+    const value = -neighbor.sides[neighborLocalSide];
+    const current = seen.get(newLocalSide);
+    if (current != null && current !== value && !force) return null;
+    seen.set(newLocalSide, value);
+  }
+  seen.forEach((value, side) => { newPiece.sides[side] = value; });
+  return newPiece;
+}
+function puzzleValidateContacts(pieces) {
+  for (let i = 0; i < pieces.length; i += 1) {
+    for (let j = i + 1; j < pieces.length; j += 1) {
+      const direction = puzzleDirectionBetween(pieces[i], pieces[j]);
+      if (!direction) continue;
+      const aSide = puzzleLocalSideForWorld(pieces[i], direction);
+      const bSide = puzzleLocalSideForWorld(pieces[j], puzzleOppositeSide[direction]);
+      if (!pieces[i].sides[aSide] || !pieces[j].sides[bSide]) return false;
+      if (pieces[i].sides[aSide] + pieces[j].sides[bSide] !== 0) return false;
+    }
+  }
+  return true;
+}
+function puzzleDirectionBetween(from, to) {
+  const dx = Math.round(to.x - from.x);
+  const dy = Math.round(to.y - from.y);
+  return Object.entries(puzzleAllDirections).find(([, dir]) => dir.x === dx && dir.y === dy)?.[0] || null;
+}
+function puzzleLocalSideForWorld(piece, worldSide) {
+  const worldIndex = ["top", "right", "bottom", "left"].indexOf(worldSide);
+  const turns = puzzleQuarterTurns(piece.angle || 0);
+  return ["top", "right", "bottom", "left"][((worldIndex - turns) % 4 + 4) % 4];
+}
+function puzzleQuarterTurns(angle) {
+  const quarter = Math.PI / 2;
+  return ((Math.round(angle / quarter) % 4) + 4) % 4;
 }
 function puzzleRotatePoint(point, angle) {
   const cos = Math.cos(angle), sin = Math.sin(angle);
@@ -465,7 +601,7 @@ function puzzleNormalizeAngle(angle) {
 }
 function puzzleDrawPieces(pieces) {
   const size = 17.5, spacing = size;
-  const visibleStrokeWidth = Math.max(0.08, config.puzzleStrokeWidth || 0.32) * (viewport.size / 100);
+  const visibleStrokeWidth = Math.max(0.03, config.puzzleStrokeWidth || 0.16) * (viewport.size / 100);
   ctx.save();
   ctx.lineWidth = visibleStrokeWidth * 2;
   ctx.strokeStyle = config.puzzleStrokeColor;
@@ -490,7 +626,7 @@ function puzzleDrawPieces(pieces) {
   ctx.globalAlpha = 1;
 }
 function puzzleTracePiece(size, sides) {
-  const half = size / 2, knob = size * 0.18, span = size * 0.3;
+  const half = size / 2, knob = size * 0.22, span = size * 0.46;
   ctx.beginPath();
   ctx.moveTo(-half, -half);
   puzzleTraceHorizontal(-half, half, -half, sides.top || 0, -1, knob, span);
@@ -501,23 +637,27 @@ function puzzleTracePiece(size, sides) {
 }
 function puzzleTraceHorizontal(fromX, toX, y, connector, outwardY, knob, span) {
   const dir = Math.sign(toX - fromX) || 1, mid = (fromX + toX) / 2, a = mid - span / 2 * dir, b = mid + span / 2 * dir;
+  const neck = span * 0.22;
   ctx.lineTo(a, y);
   if (!connector) ctx.lineTo(b, y);
   else {
     const depth = knob * outwardY * connector;
-    ctx.bezierCurveTo(a + span * 0.18 * dir, y, a + span * 0.18 * dir, y + depth, mid, y + depth);
-    ctx.bezierCurveTo(b - span * 0.18 * dir, y + depth, b - span * 0.18 * dir, y, b, y);
+    ctx.bezierCurveTo(a + neck * 0.54 * dir, y, a + neck * 0.54 * dir, y + depth * 0.46, mid - neck * 0.32 * dir, y + depth * 0.58);
+    ctx.bezierCurveTo(mid - neck * 0.72 * dir, y + depth, mid + neck * 0.72 * dir, y + depth, mid + neck * 0.32 * dir, y + depth * 0.58);
+    ctx.bezierCurveTo(b - neck * 0.54 * dir, y + depth * 0.46, b - neck * 0.54 * dir, y, b, y);
   }
   ctx.lineTo(toX, y);
 }
 function puzzleTraceVertical(x, fromY, toY, connector, outwardX, knob, span) {
   const dir = Math.sign(toY - fromY) || 1, mid = (fromY + toY) / 2, a = mid - span / 2 * dir, b = mid + span / 2 * dir;
+  const neck = span * 0.22;
   ctx.lineTo(x, a);
   if (!connector) ctx.lineTo(x, b);
   else {
     const depth = knob * outwardX * connector;
-    ctx.bezierCurveTo(x, a + span * 0.18 * dir, x + depth, a + span * 0.18 * dir, x + depth, mid);
-    ctx.bezierCurveTo(x + depth, b - span * 0.18 * dir, x, b - span * 0.18 * dir, x, b);
+    ctx.bezierCurveTo(x, a + neck * 0.54 * dir, x + depth * 0.46, a + neck * 0.54 * dir, x + depth * 0.58, mid - neck * 0.32 * dir);
+    ctx.bezierCurveTo(x + depth, mid - neck * 0.72 * dir, x + depth, mid + neck * 0.72 * dir, x + depth * 0.58, mid + neck * 0.32 * dir);
+    ctx.bezierCurveTo(x + depth * 0.46, b - neck * 0.54 * dir, x, b - neck * 0.54 * dir, x, b);
   }
   ctx.lineTo(x, toY);
 }
@@ -532,7 +672,7 @@ function generatePuzzleLottie() {
     {
       index: index + 1,
       stroke: config.puzzleStrokeColor,
-      strokeWidth: Math.max(0.08, Number(config.puzzleStrokeWidth) || 0.32),
+      strokeWidth: Math.max(0.03, Number(config.puzzleStrokeWidth) || 0.16),
       opacity: config.puzzleStrokeOpacity,
     },
   ));

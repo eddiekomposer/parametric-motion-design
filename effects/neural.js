@@ -103,6 +103,9 @@ function buildNeuralNodes() {
 }
 
 function makeNeuralReferenceSampler() {
+  if (state.sourceKind === "svg" && state.normalizedContours?.some((contour) => contour.length >= 3)) {
+    return makeNeuralSvgReferenceSampler();
+  }
   if (!state.imageData) return (x, y) => Math.hypot(x - 50, y - 50) <= 41.5;
   const field = makeScalarField(state.imageData, imageMode || "auto");
   const level = automaticContourLevel(field);
@@ -132,6 +135,57 @@ function makeNeuralReferenceSampler() {
     }
     return false;
   };
+}
+
+function makeNeuralSvgReferenceSampler() {
+  const contours = (state.normalizedContours || []).filter((contour) => contour.length >= 3);
+  if (!contours.length) return (x, y) => Math.hypot(x - 50, y - 50) <= 41.5;
+  const density = clamp(Math.round(Number(config.neuralDensity) || neuralDefaults.neuralDensity), 4, 20);
+  const pathRadius = clamp(42 / density, 1.9, 5.8);
+  const closed = state.normalizedContourClosed || [];
+  const filled = state.normalizedContourFilled || [];
+  return (x, y) => {
+    const point = { x, y };
+    let insideFilledShape = false;
+    for (let index = 0; index < contours.length; index += 1) {
+      const contour = contours[index];
+      if (closed[index] !== false && filled[index] !== false && neuralPointInPolygon(point, contour)) insideFilledShape = !insideFilledShape;
+      if (neuralDistanceToContour(point, contour, closed[index] !== false) <= pathRadius) return true;
+    }
+    return insideFilledShape;
+  };
+}
+
+function neuralPointInPolygon(point, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const a = polygon[i];
+    const b = polygon[j];
+    const intersects = ((a.y > point.y) !== (b.y > point.y)) &&
+      point.x < ((b.x - a.x) * (point.y - a.y)) / ((b.y - a.y) || 0.000001) + a.x;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function neuralDistanceToContour(point, contour, closed) {
+  let best = Infinity;
+  const segmentCount = closed ? contour.length : contour.length - 1;
+  for (let index = 0; index < segmentCount; index += 1) {
+    best = Math.min(best, neuralDistanceToSegment(point, contour[index], contour[(index + 1) % contour.length]));
+  }
+  return best;
+}
+
+function neuralDistanceToSegment(point, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq <= 0.000001) return Math.hypot(point.x - a.x, point.y - a.y);
+  const t = clamp(((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq, 0, 1);
+  const x = a.x + dx * t;
+  const y = a.y + dy * t;
+  return Math.hypot(point.x - x, point.y - y);
 }
 
 function buildNeuralFallbackNodes(columns) {

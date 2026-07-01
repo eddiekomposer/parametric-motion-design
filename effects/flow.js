@@ -50,6 +50,9 @@ function renderFlowEffect(now) {
   const time = now - state.startedAt;
   const loop = getLoopState(time);
   const detailScale = getDetailScale(time);
+  const openFlow = referenceHasOpenContours();
+  const openPulse = openFlow && config.pulseCycleMs > 0;
+  const openPulseProgress = openPulse ? getOpenFlowPulseProgress(time) : loop.progress;
   hideParticleCanvas();
   hideLineGroup();
   hideSineGroup();
@@ -58,13 +61,19 @@ function renderFlowEffect(now) {
   motionGroup.removeAttribute("transform");
   motionPath.setAttribute("stroke-width", String(config.strokeWidth));
   motionPath.setAttribute("stroke", config.contourColor);
-  motionPath.setAttribute("d", state.normalizedContours.length ? buildSmoothSvgMultiPath(state.normalizedContours) : buildPath(detailScale));
+  motionPath.setAttribute("d", state.normalizedContours.length ? buildSmoothSvgMultiPath(state.normalizedContours, state.normalizedContourClosed) : buildPath(detailScale));
   motionPath.setAttribute("opacity", config.contourOpacity.toFixed(3));
   const count = Math.max(2, Math.round(config.particleCount));
   state.particles.forEach((node, index) => {
     if (index >= count) return;
     const tailOffset = index / (count - 1);
-    const point = curvePoint(normalizeProgress(loop.progress - tailOffset * config.trailSpan), detailScale);
+    const rawProgress = openPulseProgress - tailOffset * config.trailSpan;
+    if (openPulse && rawProgress < 0) {
+      node.setAttribute("opacity", "0");
+      return;
+    }
+    const progress = openPulse ? clamp(rawProgress, 0, 1) : normalizeProgress(rawProgress);
+    const point = openFlow ? sampleFlowOpenPathPoint(progress) : curvePoint(progress, detailScale);
     const fade = Math.pow(1 - tailOffset, 0.56);
     node.setAttribute("fill", config.motionColor);
     node.setAttribute("cx", point.x.toFixed(2));
@@ -74,8 +83,27 @@ function renderFlowEffect(now) {
   });
 }
 
+function getOpenFlowPulseProgress(time) {
+  const cycleDuration = Math.max(1, config.pulseCycleMs);
+  const gapRatio = clamp(config.pulseGapRatio, 0, 0.8);
+  const visibleDuration = Math.max(1, cycleDuration * (1 - gapRatio));
+  const local = time % cycleDuration;
+  return softenedBezierProgress(clamp(local / visibleDuration, 0, 1));
+}
+
 function prepareFlowEffect() {
-  state.samples = resampleSmoothContoursAsOneStroke(state.normalizedContours.length ? state.normalizedContours : [state.normalized], derivedSampleCount(config.harmonicCount));
+  const contours = state.normalizedContours.length ? state.normalizedContours : [state.normalized];
+  const sampleCount = derivedSampleCount(config.harmonicCount);
+  state.flowSampleContours = [];
+  state.flowSampleContourClosed = [];
+  if (referenceHasOpenContours()) {
+    state.flowSampleContours = buildFlowSampleContours(contours, state.normalizedContourClosed, sampleCount);
+    state.flowSampleContourClosed = contours.map((_, index) => state.normalizedContourClosed[index] ?? true);
+    state.samples = state.flowSampleContours.flat();
+    state.coefficients = [];
+    return;
+  }
+  state.samples = resampleSmoothContoursAsOneStroke(contours, sampleCount);
   const harmonicLimit = Math.min(Math.round(config.harmonicCount), Math.floor(state.samples.length / 2) - 1);
   state.coefficients = computeCoefficients(state.samples, harmonicLimit);
 }
@@ -83,6 +111,9 @@ function prepareFlowEffect() {
 function generateFlowStandaloneHTML() {
   const coeffs = state.coefficients.map(({ k, re, im }) => ({ k, re: Number(re.toFixed(6)), im: Number(im.toFixed(6)) }));
   const contourPaths = state.normalizedContours.map((contour) => contour.map((p) => ({ x: Number(p.x.toFixed(3)), y: Number(p.y.toFixed(3)) })));
+  const contourClosed = state.normalizedContours.map((_, index) => state.normalizedContourClosed[index] !== false);
+  const flowOpen = referenceHasOpenContours();
+  const flowSampleContours = (state.flowSampleContours || []).map((contour) => contour.map((p) => ({ x: Number(p.x.toFixed(3)), y: Number(p.y.toFixed(3)) })));
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -111,6 +142,9 @@ svg { width: min(72vmin, 520px); height: min(72vmin, 520px); overflow: visible; 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const coeffs = ${JSON.stringify(coeffs)};
 const contourPaths = ${JSON.stringify(contourPaths)};
+const contourClosed = ${JSON.stringify(contourClosed)};
+const flowOpen = ${JSON.stringify(flowOpen)};
+const flowSampleContours = ${JSON.stringify(flowSampleContours)};
 const config = ${JSON.stringify({
   effectType: config.effectType,
   particleCount: Math.round(config.particleCount),
@@ -167,12 +201,31 @@ function bezierControls(points, index, smoothing = 0.82) {
     c2: { x: p2.x - (p3.x - p1.x) * scale, y: p2.y - (p3.y - p1.y) * scale },
   };
 }
-function buildSmoothSvgPath(points) {
+function openBezierControls(points, index, smoothing = 0.82) {
+  const p0 = points[Math.max(0, index - 1)];
+  const p1 = points[index];
+  const p2 = points[index + 1];
+  const p3 = points[Math.min(points.length - 1, index + 2)];
+  const scale = smoothing / 6;
+  return {
+    c1: { x: p1.x + (p2.x - p0.x) * scale, y: p1.y + (p2.y - p0.y) * scale },
+    c2: { x: p2.x - (p3.x - p1.x) * scale, y: p2.y - (p3.y - p1.y) * scale },
+  };
+}
+function buildSmoothSvgPath(points, closed = true) {
   if (!points.length) return "";
   const parts = ["M " + points[0].x.toFixed(2) + " " + points[0].y.toFixed(2)];
   if (points.length < 3) {
     points.slice(1).forEach((p) => parts.push("L " + p.x.toFixed(2) + " " + p.y.toFixed(2)));
-    return parts.join(" ") + " Z";
+    return closed ? parts.join(" ") + " Z" : parts.join(" ");
+  }
+  if (!closed) {
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const end = points[i + 1];
+      const cp = openBezierControls(points, i);
+      parts.push("C " + cp.c1.x.toFixed(2) + " " + cp.c1.y.toFixed(2) + " " + cp.c2.x.toFixed(2) + " " + cp.c2.y.toFixed(2) + " " + end.x.toFixed(2) + " " + end.y.toFixed(2));
+    }
+    return parts.join(" ");
   }
   for (let i = 0; i < points.length; i += 1) {
     const end = closedPoint(points, i + 1);
@@ -181,13 +234,58 @@ function buildSmoothSvgPath(points) {
   }
   return parts.join(" ") + " Z";
 }
-function buildSmoothSvgMultiPath(contours) {
-  return contours.map(buildSmoothSvgPath).filter(Boolean).join(" ");
+function buildSmoothSvgMultiPath(contours, closedFlags = []) {
+  return contours.map((contour, index) => buildSmoothSvgPath(contour, closedFlags[index] !== false)).filter(Boolean).join(" ");
 }
 function buildPath(detail, steps = 180) {
   const points = [];
   for (let i = 0; i < steps; i += 1) points.push(point(i / steps, detail));
   return buildSmoothSvgPath(points);
+}
+function distance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+function pathLength(points, closed = true) {
+  let length = 0;
+  const limit = closed ? points.length : points.length - 1;
+  for (let i = 0; i < limit; i += 1) length += distance(points[i], points[(i + 1) % points.length]);
+  return length;
+}
+function pointAlongContour(points, progress, closed = true) {
+  if (!points.length) return { x: 50, y: 50 };
+  if (points.length === 1) return points[0];
+  const lengths = [];
+  let total = 0;
+  const limit = closed ? points.length : points.length - 1;
+  for (let i = 0; i < limit; i += 1) {
+    const length = distance(points[i], points[(i + 1) % points.length]);
+    lengths.push(length);
+    total += length;
+  }
+  const target = clamp(progress, 0, 1) * Math.max(1, total);
+  let walked = 0;
+  for (let i = 0; i < lengths.length; i += 1) {
+    const length = lengths[i];
+    if (walked + length >= target || i === lengths.length - 1) {
+      const local = length <= 0 ? 0 : (target - walked) / length;
+      const a = points[i], b = points[(i + 1) % points.length];
+      return { x: a.x + (b.x - a.x) * local, y: a.y + (b.y - a.y) * local };
+    }
+    walked += length;
+  }
+  return closed ? points[0] : points[points.length - 1];
+}
+function openPoint(progress) {
+  const contours = flowSampleContours.filter((contour) => contour.length >= 2);
+  if (!contours.length) return { x: 50, y: 50 };
+  const lengths = contours.map((contour, index) => pathLength(contour, contourClosed[index] !== false));
+  const total = lengths.reduce((sum, value) => sum + value, 0) || 1;
+  let target = clamp(progress, 0, 1) * total;
+  for (let index = 0; index < contours.length; index += 1) {
+    if (target <= lengths[index] || index === contours.length - 1) return pointAlongContour(contours[index], lengths[index] <= 0 ? 0 : target / lengths[index], contourClosed[index] !== false);
+    target -= lengths[index];
+  }
+  return pointAlongContour(contours[contours.length - 1], 1, contourClosed[contours.length - 1] !== false);
 }
 function loopState(time) {
   const progress = (time % config.durationMs) / config.durationMs;
@@ -232,16 +330,31 @@ function softenedBezierProgress(value) {
   const eased = standardBezierEase(linear);
   return linear * 0.65 + eased * 0.35;
 }
+function openFlowPulseProgress(time) {
+  const cycleDuration = Math.max(1, config.pulseCycleMs);
+  const gapRatio = clamp(config.pulseGapRatio, 0, 0.8);
+  const visibleDuration = Math.max(1, cycleDuration * (1 - gapRatio));
+  const local = time % cycleDuration;
+  return softenedBezierProgress(clamp(local / visibleDuration, 0, 1));
+}
 function tick(now) {
   const loop = loopState(now);
   const d = detailScale(now);
+  const openPulse = flowOpen && config.pulseCycleMs > 0;
+  const openProgress = openPulse ? openFlowPulseProgress(now) : loop.progress;
   group.removeAttribute("transform");
-  path.setAttribute("d", contourPaths.length ? buildSmoothSvgMultiPath(contourPaths) : buildPath(d));
+  path.setAttribute("d", contourPaths.length ? buildSmoothSvgMultiPath(contourPaths, contourClosed) : buildPath(d));
   path.setAttribute("stroke", config.contourColor);
   path.setAttribute("opacity", config.contourOpacity.toFixed(3));
   particles.forEach((node, index) => {
     const tail = index / (config.particleCount - 1);
-    const p = point(normalizeProgress(loop.progress - tail * config.trailSpan), d);
+    const raw = openProgress - tail * config.trailSpan;
+    if (openPulse && raw < 0) {
+      node.setAttribute("opacity", "0");
+      return;
+    }
+    const progress = openPulse ? clamp(raw, 0, 1) : normalizeProgress(raw);
+    const p = flowOpen ? openPoint(progress) : point(progress, d);
     const fade = Math.pow(1 - tail, 0.56);
     node.setAttribute("fill", config.motionColor);
     node.setAttribute("cx", p.x.toFixed(2));
@@ -261,7 +374,7 @@ function generateFlowLottie() {
   const contours = state.normalizedContours.length ? state.normalizedContours : [state.normalized].filter((contour) => contour.length);
   const layers = contours.map((contour, index) => makeLottieShapeLayer(
     `Flow contour ${index + 1}`,
-    makeLottiePathShape(contour, true),
+    makeLottiePathShape(contour, state.normalizedContourClosed[index] !== false),
     {
       index: index + 1,
       stroke: config.motionColor,

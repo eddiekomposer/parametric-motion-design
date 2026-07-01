@@ -10,7 +10,6 @@ var lineDefaults = {
   constellationContourColor: "#f6f7f1",
   constellationContourOpacity: 0.28,
   constellationContourWidth: 0.8,
-  constellationGlow: 0.24,
   constellationStaggerMs: 220,
   constellationFlickerMs: 150,
   lineFrameIntervalMs: 2600,
@@ -38,7 +37,6 @@ var lineControlDefs = [
   { key: "constellationPointCount", label: "端点数量", min: 5, max: 20, step: 1, showWhen: () => config.lineStyle === "constellation", tip: "只控制星座样式中视觉端点的数量，不改变图案轮廓精度。" },
   { key: "constellationContourWidth", label: "轮廓粗细", min: 0.3, max: 4, step: 0.1, showWhen: () => config.lineStyle === "constellation", tip: "控制星座样式中底层轮廓线粗细。" },
   { key: "constellationContourColor", alphaKey: "constellationContourOpacity", type: "colorAlpha", label: "轮廓颜色", showWhen: () => config.lineStyle === "constellation", tip: "控制星座样式中底层轮廓线颜色和透明度。" },
-  { key: "constellationGlow", label: "光晕", min: 0, max: 1, step: 0.01, showWhen: () => config.lineStyle === "constellation", tip: "给星座样式中的点和线增加光晕，值越大越亮。" },
   { key: "constellationStaggerMs", label: "时间差", min: 0, max: 900, step: 20, showWhen: () => config.lineStyle === "constellation", tip: "控制星座样式中过渡时不同点和线依次亮起的延迟。" },
   { key: "constellationFlickerMs", label: "闪烁时长", min: 80, max: 240, step: 10, showWhen: () => config.lineStyle === "constellation", tip: "控制星座样式中单次接触不良闪烁持续多久；每根线会随机闪烁 0 到 2 次。" },
   { key: "lineFrameIntervalMs", label: "时间间隔", min: 900, max: 6000, step: 100, tip: "每隔这段时间切到下一个关键帧，末尾用自定义过渡时长 ease-in-out；最后一帧直接衔接回第一帧。" },
@@ -223,25 +221,46 @@ function cloneLineConnections(connections) {
 }
 
 function chooseLineFramePoints(chars, frameId, frameIndex, previousFrames) {
-  if (!chars.length || !state.coefficients.length) return [];
+  if (!chars.length || (!state.coefficients.length && !state.flowSampleContours?.length)) return [];
   let best = null;
-  for (let variant = 0; variant < 24; variant += 1) {
+  for (let variant = 0; variant < 72; variant += 1) {
     const rng = seededRandom(`${frameId}|${frameIndex}|${chars.join("")}|${variant}`);
-    const offset = normalizeProgress(frameIndex * 0.38196601125 + variant * 0.071 + rng() * 0.13);
+    const offset = normalizeProgress(frameIndex * 0.38196601125 + variant * 0.137 + rng() * 0.22);
     const points = chars.map((char, index) => {
       const spread = 1 / chars.length;
-      const jitter = (rng() - 0.5) * Math.min(0.72 * spread, 0.13);
+      const jitter = (rng() - 0.5) * Math.min(1.12 * spread, 0.22);
       const progress = normalizeProgress(offset + (index + 0.5) * spread + jitter);
       return {
         char,
         progress,
-        point: curvePointFromCoefficients(state.coefficients, progress, 1),
+        point: curvePoint(progress, 1),
       };
     });
-    const score = lineFrameDifference(points, previousFrames);
+    const score = lineFrameDifference(points, previousFrames) + lineFrameSpatialSpread(points) * 0.92;
     if (!best || score > best.score) best = { score, points };
   }
   return best?.points ?? [];
+}
+
+function lineFrameSpatialSpread(points) {
+  if (points.length < 2) return 0;
+  const coords = points.map((item) => item.point);
+  const minX = Math.min(...coords.map((point) => point.x));
+  const maxX = Math.max(...coords.map((point) => point.x));
+  const minY = Math.min(...coords.map((point) => point.y));
+  const maxY = Math.max(...coords.map((point) => point.y));
+  const boxScore = Math.hypot(maxX - minX, maxY - minY) / 130;
+  let nearestTotal = 0;
+  coords.forEach((point, index) => {
+    let nearest = Infinity;
+    coords.forEach((other, otherIndex) => {
+      if (index === otherIndex) return;
+      nearest = Math.min(nearest, distance(point, other));
+    });
+    nearestTotal += Math.min(nearest, 42) / 42;
+  });
+  const distanceScore = nearestTotal / points.length;
+  return boxScore * 0.62 + distanceScore * 0.38;
 }
 
 function lineFrameDifference(points, previousFrames) {
@@ -446,6 +465,7 @@ function ensureConstellationElements(dotCount, lineCount, textCount) {
 }
 
 function buildConstellationPoints() {
+  if (useDefaultConstellationScatter()) return buildDefaultConstellationPoints();
   const contours = state.normalizedContours.length ? state.normalizedContours : [state.normalized].filter((contour) => contour.length);
   const maxChars = Math.max(0, ...config.lineKeyframes.map((frame) => Array.from(frame.text ?? "").filter((char) => !/\s/.test(char)).length));
   const target = Math.max(5, maxChars, Math.round(config.constellationPointCount));
@@ -485,6 +505,47 @@ function buildConstellationPoints() {
     points.push({ ...point, onContour: false, contourIndex: -1, contourPointIndex: -1, contourPointCount: 0 });
   }
   return points.slice(0, target);
+}
+
+function useDefaultConstellationScatter() {
+  return Boolean(state.usingSampleReference && config.effectType === "line" && config.lineStyle === "constellation");
+}
+
+function buildDefaultConstellationPoints() {
+  const maxChars = Math.max(0, ...config.lineKeyframes.map((frame) => Array.from(frame.text ?? "").filter((char) => !/\s/.test(char)).length));
+  const target = Math.max(5, maxChars, Math.round(config.constellationPointCount));
+  const rng = seededRandom(`constellation-default-scatter|${target}|${config.lineCurveSeed}|${config.lineKeyframes.map((frame) => frame.text).join("|")}`);
+  const margin = 7;
+  const usable = 100 - margin * 2;
+  const points = [];
+  while (points.length < target) {
+    let best = null;
+    const candidateCount = points.length ? 96 : 1;
+    for (let index = 0; index < candidateCount; index += 1) {
+      const candidate = {
+        x: margin + rng() * usable,
+        y: margin + rng() * usable,
+      };
+      if (!points.length) {
+        best = { candidate, score: 1 };
+        continue;
+      }
+      const nearest = points.reduce((min, point) => Math.min(min, distance(candidate, point)), Infinity);
+      const edgeReach = Math.max(Math.abs(candidate.x - 50), Math.abs(candidate.y - 50)) / 50;
+      const score = nearest + edgeReach * 5 + rng() * 0.35;
+      if (!best || score > best.score) best = { candidate, score };
+    }
+    points.push(best?.candidate ?? { x: 50, y: 50 });
+  }
+  return points.map((point, index) => ({
+    x: point.x,
+    y: point.y,
+    onContour: false,
+    contourIndex: -1,
+    contourPointIndex: -1,
+    contourPointCount: 0,
+    contourProgress: index / Math.max(1, target),
+  }));
 }
 
 function contourLength(contour) {
@@ -629,6 +690,7 @@ function constellationContourConnectionPath(a, b, activePoints = []) {
 }
 
 function constellationContourBasePath(activePoints = []) {
+  if (useDefaultConstellationScatter()) return "";
   const contours = state.normalizedContours.length ? state.normalizedContours : [state.normalized].filter((contour) => contour.length);
   const blockers = constellationContourGapBlockers(activePoints);
   return contours.map((contour) => {
@@ -716,7 +778,7 @@ function renderLineEffect(now) {
   const local = ((elapsed % cycle) + cycle) % cycle;
   motionPath.setAttribute("stroke-width", String(config.lineStrokeWidth));
   motionPath.setAttribute("stroke", config.lineColor);
-  motionPath.setAttribute("d", state.normalizedContours.length ? buildSmoothSvgMultiPath(state.normalizedContours) : buildPath(1));
+  motionPath.setAttribute("d", state.normalizedContours.length ? buildSmoothSvgMultiPath(state.normalizedContours, state.normalizedContourClosed) : buildPath(1));
   motionPath.setAttribute("opacity", "0");
 
   if (!frames.length) {
@@ -745,7 +807,7 @@ function renderConstellationLineEffect(now) {
   motionPath.setAttribute("stroke-width", String(config.constellationContourWidth));
   motionPath.setAttribute("stroke", config.constellationContourColor);
   motionPath.setAttribute("opacity", String(config.constellationContourOpacity));
-  motionPath.style.filter = constellationGlowFilter(0.65);
+  motionPath.style.filter = "";
   if (!frames.length) {
     drawConstellationBase(0, 0);
     return;
@@ -771,7 +833,7 @@ function drawConstellationBase(lineCount, textCount, contourPath = state.constel
     dot.setAttribute("r", dotRadius.toFixed(2));
     dot.setAttribute("fill", config.lineCharColor);
     dot.setAttribute("opacity", String(Math.min(0.42, config.lineCharOpacity * 0.24)));
-    dot.style.filter = constellationGlowFilter(0.42);
+    dot.style.filter = "";
   });
 }
 
@@ -812,7 +874,7 @@ function highlightConstellationDots(points, amount) {
     if (!dot) return;
     dot.setAttribute("r", radius.toFixed(2));
     dot.setAttribute("opacity", String(Math.max(0, Math.min(0.42, config.lineCharOpacity * 0.24) * (1 - value))));
-    dot.style.filter = value > 0.01 ? "" : constellationGlowFilter(0.42);
+    dot.style.filter = "";
   });
 }
 
@@ -828,7 +890,7 @@ function drawConstellationTexts(points, offset, opacity) {
     text.setAttribute("fill", config.lineCharColor);
     text.setAttribute("font-size", String(config.lineCharSize));
     text.setAttribute("opacity", (config.lineCharOpacity * value).toFixed(3));
-    text.style.filter = constellationGlowFilter(1);
+    text.style.filter = "";
   });
 }
 
@@ -851,15 +913,9 @@ function drawConstellationConnection(path, points, connection, fraction, index, 
   path.setAttribute("d", d);
   path.setAttribute("stroke", config.lineColor);
   path.setAttribute("stroke-width", String(Math.max(0.45, config.lineStrokeWidth)));
-  path.setAttribute("opacity", String(Math.min(1, config.lineOpacity * (0.82 + config.constellationGlow * 0.55) * opacityScale)));
-  path.style.filter = constellationGlowFilter(1);
+  path.setAttribute("opacity", String(Math.min(1, config.lineOpacity * opacityScale)));
+  path.style.filter = "";
   setPathDrawFraction(path, fraction);
-}
-
-function constellationGlowFilter(multiplier = 1) {
-  const value = Math.max(0, Number(config.constellationGlow) || 0) * multiplier;
-  if (value <= 0.01) return "";
-  return `drop-shadow(0 0 ${(2 + value * 8).toFixed(1)}px ${config.lineColor})`;
 }
 
 function constellationItemLocalProgress(progress, index, total, transitionMs = config.lineTransitionMs) {
@@ -1301,7 +1357,7 @@ function renderLineEditFrame() {
     motionPath.setAttribute("stroke-width", String(config.constellationContourWidth));
     motionPath.setAttribute("stroke", config.constellationContourColor);
     motionPath.setAttribute("opacity", String(config.constellationContourOpacity));
-    motionPath.style.filter = constellationGlowFilter(0.65);
+    motionPath.style.filter = "";
     drawConstellationFrame(frame);
     renderLineEditHandles(frame);
     updateLineEditToolbar();
@@ -1309,7 +1365,7 @@ function renderLineEditFrame() {
   }
   motionPath.setAttribute("stroke-width", String(config.lineStrokeWidth));
   motionPath.setAttribute("stroke", config.lineColor);
-  motionPath.setAttribute("d", state.normalizedContours.length ? buildSmoothSvgMultiPath(state.normalizedContours) : buildPath(1));
+  motionPath.setAttribute("d", state.normalizedContours.length ? buildSmoothSvgMultiPath(state.normalizedContours, state.normalizedContourClosed) : buildPath(1));
   motionPath.setAttribute("opacity", "0");
   const frame = currentLineEditFrame();
   if (!frame) {

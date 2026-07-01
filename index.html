@@ -991,10 +991,6 @@
       pointer-events: stroke;
     }
 
-    .line-path.is-selected {
-      filter: drop-shadow(0 0 4px rgba(126, 225, 207, 0.75));
-    }
-
     .line-edit-handle-line {
       stroke: rgba(126, 225, 207, 0.42);
       stroke-width: 0.35;
@@ -1662,7 +1658,10 @@
       fileName: "sample-shape.svg",
       imageData: null,
       sourceKind: "raster",
+      usingSampleReference: true,
       svgContours: [],
+      svgContourClosed: [],
+      svgContourFilled: [],
       mask: null,
       contour: [],
       contours: [],
@@ -1674,6 +1673,8 @@
       simplifiedContours: [],
       normalized: [],
       normalizedContours: [],
+      normalizedContourClosed: [],
+      normalizedContourFilled: [],
       samples: [],
       coefficients: [],
       particles: [],
@@ -1816,7 +1817,6 @@
       }
       if (key === "lineStyle") return value === "constellation" ? "星座" : "有机物";
       if (key === "constellationPointCount") return `${Math.round(Number(value))}`;
-      if (key === "constellationGlow") return `${Math.round(Number(value) * 100)}%`;
       if (key === "trailSpan" || key === "strokeWidth" || key === "sampleRatio" || key === "lineStrokeWidth" || key === "lineCharSize" || key.startsWith("sine")) {
         if (key === "sineLineCount") return `${Math.round(value)}`;
         if (key === "sineColor") return colorToRgbaText(value);
@@ -2495,19 +2495,21 @@
       return Math.abs((a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y)) / 2);
     }
 
-    function simplifyToPointCount(points, pointCount) {
+    function simplifyToPointCount(points, pointCount, closed = true) {
       const target = Math.max(8, Math.round(pointCount));
       const maxInput = Math.max(target * 24, 256);
-      const source = points.length > maxInput ? resampleClosed(points, maxInput) : points;
+      const source = points.length > maxInput ? (closed ? resampleClosed(points, maxInput) : resampleOpen(points, maxInput)) : points;
       let simplified = source.filter((point, index) => index === 0 || distance(point, source[index - 1]) > 0.01);
       if (simplified.length <= target) return simplified;
       while (simplified.length > target) {
-        let removeIndex = 0;
+        let removeIndex = closed ? 0 : 1;
         let smallestArea = Infinity;
-        for (let i = 0; i < simplified.length; i += 1) {
-          const prev = simplified[(i - 1 + simplified.length) % simplified.length];
+        const start = closed ? 0 : 1;
+        const end = closed ? simplified.length : simplified.length - 1;
+        for (let i = start; i < end; i += 1) {
+          const prev = closed ? simplified[(i - 1 + simplified.length) % simplified.length] : simplified[i - 1];
           const curr = simplified[i];
-          const next = simplified[(i + 1) % simplified.length];
+          const next = closed ? simplified[(i + 1) % simplified.length] : simplified[i + 1];
           const area = triangleArea(prev, curr, next);
           if (area < smallestArea) {
             smallestArea = area;
@@ -3039,9 +3041,10 @@
       return path;
     }
 
-    function pathLength(points) {
+    function pathLength(points, closed = true) {
       let length = 0;
-      for (let i = 0; i < points.length; i += 1) {
+      const limit = closed ? points.length : points.length - 1;
+      for (let i = 0; i < limit; i += 1) {
         length += distance(points[i], points[(i + 1) % points.length]);
       }
       return length;
@@ -3080,33 +3083,37 @@
       return contours.map((contour) => contour.map((p) => ({ x: p.x * scale + offsetX, y: p.y * scale + offsetY })));
     }
 
-    function simplifyContoursToPointCount(contours, pointCount) {
-      const valid = contours.filter((contour) => contour.length >= 3);
+    function simplifyContoursToPointCount(contours, pointCount, closedFlags = []) {
+      const valid = contours
+        .map((contour, index) => ({ contour, closed: closedFlags[index] ?? true }))
+        .filter((item) => item.contour.length >= 3);
       if (!valid.length) return [];
       const total = Math.max(8, Math.round(pointCount));
-      if (valid.length === 1) return [simplifyToPointCount(valid[0], total)];
-      const lengths = valid.map(pathLength);
+      if (valid.length === 1) return [simplifyToPointCount(valid[0].contour, total, valid[0].closed)];
+      const lengths = valid.map((item) => pathLength(item.contour, item.closed));
       const totalLength = lengths.reduce((sum, length) => sum + length, 0) || 1;
       const minPoints = 6;
       let remaining = Math.max(0, total - minPoints * valid.length);
-      return valid.map((contour, index) => {
+      return valid.map((item, index) => {
         const allocated = minPoints + Math.round(remaining * (lengths[index] / totalLength));
-        return simplifyToPointCount(contour, Math.max(minPoints, allocated));
+        return simplifyToPointCount(item.contour, Math.max(minPoints, allocated), item.closed);
       });
     }
 
-    function applyPointCloudDensity(contours, ratio, simplifyPointCount) {
-      const valid = contours.filter((contour) => contour.length >= 3);
+    function applyPointCloudDensity(contours, ratio, simplifyPointCount, closedFlags = []) {
+      const valid = contours
+        .map((contour, index) => ({ contour, closed: closedFlags[index] ?? true }))
+        .filter((item) => item.contour.length >= 3);
       if (!valid.length) return [];
       const density = clamp(Number(ratio) || 0.18, 0.04, 0.28);
       const totalTarget = Math.round(24 + density * 920);
-      const lengths = valid.map(pathLength);
+      const lengths = valid.map((item) => pathLength(item.contour, item.closed));
       const totalLength = lengths.reduce((sum, length) => sum + length, 0) || 1;
       const minPerContour = Math.max(8, Math.ceil(Math.round(simplifyPointCount) / valid.length));
-      return valid.map((contour, index) => {
+      return valid.map((item, index) => {
         const share = lengths[index] / totalLength;
         const target = Math.max(minPerContour, Math.round(totalTarget * share));
-        return resampleClosed(contour, target);
+        return item.closed ? resampleClosed(item.contour, target) : resampleOpen(item.contour, target);
       });
     }
 
@@ -3215,6 +3222,18 @@
       };
     }
 
+    function openBezierControls(points, index, smoothing = 0.82) {
+      const p0 = points[Math.max(0, index - 1)];
+      const p1 = points[index];
+      const p2 = points[index + 1];
+      const p3 = points[Math.min(points.length - 1, index + 2)];
+      const scale = smoothing / 6;
+      return {
+        c1: { x: p1.x + (p2.x - p0.x) * scale, y: p1.y + (p2.y - p0.y) * scale },
+        c2: { x: p2.x - (p3.x - p1.x) * scale, y: p2.y - (p3.y - p1.y) * scale },
+      };
+    }
+
     function cubicPoint(p0, c1, c2, p1, t) {
       const inv = 1 - t;
       const inv2 = inv * inv;
@@ -3242,6 +3261,26 @@
 
     function resampleSmoothClosed(points, count) {
       return resampleClosed(smoothClosedPolyline(points), count);
+    }
+
+    function smoothOpenPolyline(points, samplesPerSegment = 12) {
+      if (points.length < 3) return points.slice();
+      const samples = [];
+      const steps = Math.max(4, Math.round(samplesPerSegment));
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const start = points[i];
+        const end = points[i + 1];
+        const { c1, c2 } = openBezierControls(points, i);
+        for (let step = 0; step < steps; step += 1) {
+          samples.push(cubicPoint(start, c1, c2, end, step / steps));
+        }
+      }
+      samples.push(points[points.length - 1]);
+      return samples;
+    }
+
+    function resampleSmoothOpen(points, count) {
+      return resampleOpen(smoothOpenPolyline(points), count);
     }
 
     function resampleSmoothContoursAsOneStroke(contours, totalCount) {
@@ -3301,6 +3340,67 @@
       return route;
     }
 
+    function referenceHasOpenContours() {
+      return state.normalizedContours.some((contour, index) => contour.length >= 3 && state.normalizedContourClosed[index] === false);
+    }
+
+    function buildFlowSampleContours(contours, closedFlags, totalCount) {
+      const valid = contours
+        .map((contour, index) => ({ contour, closed: closedFlags[index] ?? true }))
+        .filter((item) => item.contour.length >= 2);
+      if (!valid.length) return [];
+      const lengths = valid.map((item) => pathLength(item.contour, item.closed));
+      const totalLength = lengths.reduce((sum, value) => sum + value, 0) || 1;
+      return valid.map((item, index) => {
+        const count = Math.max(12, Math.round(totalCount * (lengths[index] / totalLength)));
+        return item.closed ? resampleSmoothClosed(item.contour, count) : resampleSmoothOpen(item.contour, count);
+      });
+    }
+
+    function sampleFlowOpenPathPoint(progress) {
+      const contours = (state.flowSampleContours || []).filter((contour) => contour.length >= 2);
+      if (!contours.length) return { x: 50, y: 50 };
+      const closedFlags = state.flowSampleContourClosed || [];
+      const lengths = contours.map((contour, index) => pathLength(contour, closedFlags[index] !== false));
+      const totalLength = lengths.reduce((sum, value) => sum + value, 0) || 1;
+      let target = clamp(progress, 0, 1) * totalLength;
+      for (let index = 0; index < contours.length; index += 1) {
+        const length = lengths[index] || 0;
+        if (target <= length || index === contours.length - 1) {
+          return pointAlongContour(contours[index], length <= 0 ? 0 : target / length, closedFlags[index] !== false);
+        }
+        target -= length;
+      }
+      return pointAlongContour(contours[contours.length - 1], 1, closedFlags[contours.length - 1] !== false);
+    }
+
+    function pointAlongContour(points, progress, closed = true) {
+      if (!points.length) return { x: 50, y: 50 };
+      if (points.length === 1) return points[0];
+      const lengths = [];
+      let total = 0;
+      const limit = closed ? points.length : points.length - 1;
+      for (let i = 0; i < limit; i += 1) {
+        const length = distance(points[i], points[(i + 1) % points.length]);
+        lengths.push(length);
+        total += length;
+      }
+      if (total <= 0) return points[0];
+      const target = clamp(progress, 0, 1) * total;
+      let walked = 0;
+      for (let i = 0; i < lengths.length; i += 1) {
+        const length = lengths[i];
+        if (walked + length >= target || i === lengths.length - 1) {
+          const local = length <= 0 ? 0 : (target - walked) / length;
+          const a = points[i];
+          const b = points[(i + 1) % points.length];
+          return { x: a.x + (b.x - a.x) * local, y: a.y + (b.y - a.y) * local };
+        }
+        walked += length;
+      }
+      return closed ? points[0] : points[points.length - 1];
+    }
+
     function drawSmoothClosedPath(ctx, points, sx = 1, sy = 1) {
       if (!points.length) return;
       ctx.beginPath();
@@ -3318,14 +3418,22 @@
       ctx.closePath();
     }
 
-    function buildSmoothSvgPath(points) {
+    function buildSmoothSvgPath(points, closed = true) {
       if (!points.length) return "";
       const parts = [`M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`];
       if (points.length < 3) {
         points.slice(1).forEach((point) => {
           parts.push(`L ${point.x.toFixed(2)} ${point.y.toFixed(2)}`);
         });
-        return `${parts.join(" ")} Z`;
+        return closed ? `${parts.join(" ")} Z` : parts.join(" ");
+      }
+      if (!closed) {
+        for (let i = 0; i < points.length - 1; i += 1) {
+          const end = points[i + 1];
+          const { c1, c2 } = openBezierControls(points, i);
+          parts.push(`C ${c1.x.toFixed(2)} ${c1.y.toFixed(2)} ${c2.x.toFixed(2)} ${c2.y.toFixed(2)} ${end.x.toFixed(2)} ${end.y.toFixed(2)}`);
+        }
+        return parts.join(" ");
       }
       for (let i = 0; i < points.length; i += 1) {
         const end = closedPoint(points, i + 1);
@@ -3335,8 +3443,8 @@
       return `${parts.join(" ")} Z`;
     }
 
-    function buildSmoothSvgMultiPath(contours) {
-      return contours.map(buildSmoothSvgPath).filter(Boolean).join(" ");
+    function buildSmoothSvgMultiPath(contours, closedFlags = []) {
+      return contours.map((contour, index) => buildSmoothSvgPath(contour, closedFlags[index] ?? true)).filter(Boolean).join(" ");
     }
 
     function computeCoefficients(samples, harmonics) {
@@ -3374,6 +3482,7 @@
     }
 
     function curvePoint(progress, detailScale) {
+      if (referenceHasOpenContours() && state.flowSampleContours?.length) return sampleFlowOpenPathPoint(progress);
       return curvePointFromCoefficients(state.coefficients, progress, detailScale);
     }
 
@@ -3535,9 +3644,20 @@
       return state.sourceKind === "svg" && state.svgContours.some((contour) => contour.length >= 3);
     }
 
-    function applyContoursToMotionState(contours, mode) {
-      state.paths = contours.filter((path) => path.length >= 3);
-      state.paths = applyPointCloudDensity(state.paths, config.sampleRatio, config.simplifyPointCount);
+    function activeEffectUsesReferenceImage() {
+      if (config.effectType === "neural") return config.neuralSource === "reference";
+      const effect = activeEffect();
+      return !effect.hideImageOptions && !effect.hasParticleKeyframes;
+    }
+
+    function applyContoursToMotionState(contours, mode, closedFlags = [], filledFlags = []) {
+      const valid = contours
+        .map((path, index) => ({ path, closed: closedFlags[index] ?? true, filled: filledFlags[index] ?? true }))
+        .filter((item) => item.path.length >= 3);
+      state.paths = valid.map((item) => item.path);
+      const pathClosed = valid.map((item) => item.closed);
+      const pathFilled = valid.map((item) => item.filled);
+      state.paths = applyPointCloudDensity(state.paths, config.sampleRatio, config.simplifyPointCount, pathClosed);
       state.path = state.paths[0] ?? [];
       state.rawData = state.paths.flat();
       config.smoothWindow = mode === "svg" ? 1 : automaticSmoothWindow(state.rawData.length, mode);
@@ -3545,12 +3665,14 @@
       if (state.path.length < 8) state.path = state.treeSamples.length >= 8 ? treePathFromSamples(state.treeSamples) : makeFallbackShape();
       state.paths = state.paths.length ? state.paths.map((path) => smoothPath(path, config.smoothWindow)) : [state.path];
       state.path = state.paths[0];
-      state.simplifiedContours = simplifyContoursToPointCount(state.paths, config.simplifyPointCount);
+      state.simplifiedContours = simplifyContoursToPointCount(state.paths, config.simplifyPointCount, pathClosed);
       state.simplified = state.simplifiedContours[0] ?? [];
       if (state.simplified.length < 8) state.simplified = state.path;
       state.contour = state.path;
       if (!state.simplifiedContours.length) state.simplifiedContours = [state.simplified];
       state.normalizedContours = normalizeContours(state.simplifiedContours);
+      state.normalizedContourClosed = state.normalizedContours.map((_, index) => pathClosed[index] ?? true);
+      state.normalizedContourFilled = state.normalizedContours.map((_, index) => pathFilled[index] ?? true);
       state.normalized = state.normalizedContours[0] ?? normalizePoints(state.simplified);
     }
 
@@ -3575,10 +3697,10 @@
         refreshPreviewNow();
         return;
       }
-      if (config.effectType === "flow" && hasSvgVectorContours()) {
+      if (activeEffectUsesReferenceImage() && hasSvgVectorContours()) {
         setStatus("Processing");
         try {
-          applyContoursToMotionState(state.svgContours, "svg");
+          applyContoursToMotionState(state.svgContours, "svg", state.svgContourClosed, state.svgContourFilled);
           finishImageProcessing();
           return;
         } catch (error) {
@@ -3606,6 +3728,8 @@
         state.simplifiedContours = [state.simplified];
         state.contour = state.path;
         state.normalizedContours = normalizeContours(state.simplifiedContours);
+        state.normalizedContourClosed = state.normalizedContours.map(() => true);
+        state.normalizedContourFilled = state.normalizedContours.map(() => true);
         state.normalized = state.normalizedContours[0] ?? normalizePoints(state.simplified);
         activeEffect().prepare();
         updateMeta();
@@ -4024,26 +4148,28 @@
       try {
         return Array.from(imported.querySelectorAll("path, polygon, polyline, line, rect, circle, ellipse"))
           .map(sampleSvgGeometryElement)
-          .filter((contour) => contour.length >= 3)
-          .sort((a, b) => pathLength(b) - pathLength(a));
+          .filter((entry) => entry.points.length >= 3)
+          .sort((a, b) => pathLength(b.points) - pathLength(a.points));
       } finally {
         scratch.remove();
       }
     }
 
     function sampleSvgGeometryElement(node) {
-      if (typeof node.getTotalLength !== "function" || typeof node.getPointAtLength !== "function") return [];
+      if (typeof node.getTotalLength !== "function" || typeof node.getPointAtLength !== "function") return { points: [], closed: false, filled: false };
       const style = window.getComputedStyle(node);
-      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return [];
+      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return { points: [], closed: false, filled: false };
       let length = 0;
       try {
         length = node.getTotalLength();
       } catch {
-        return [];
+        return { points: [], closed: false, filled: false };
       }
-      if (!Number.isFinite(length) || length <= 0) return [];
+      if (!Number.isFinite(length) || length <= 0) return { points: [], closed: false, filled: false };
       const tag = node.tagName.toLowerCase();
       const closed = tag !== "line" && tag !== "polyline" && (tag !== "path" || /[zZ]/.test(node.getAttribute("d") || ""));
+      const fillOpacity = Number(style.fillOpacity || node.getAttribute("fill-opacity") || 1);
+      const filled = closed && tag !== "polyline" && tag !== "line" && style.fill !== "none" && fillOpacity > 0;
       const count = Math.max(12, Math.min(720, Math.ceil(length / 3)));
       const matrix = node.getCTM();
       const points = [];
@@ -4054,19 +4180,25 @@
         points.push({ x: point.x, y: point.y });
       }
       if (points.length > 1 && distance(points[0], points[points.length - 1]) < 0.001) points.pop();
-      return points;
+      return { points, closed, filled };
     }
 
     async function loadImageFile(file) {
       if (!file || (!file.type.startsWith("image/") && !isSvgFile(file))) return;
       setStatus("Loading");
       state.fileName = file.name;
+      state.usingSampleReference = false;
       state.sourceKind = isSvgFile(file) ? "svg" : "raster";
       state.svgContours = [];
+      state.svgContourClosed = [];
+      state.svgContourFilled = [];
       const dataURL = await fileToDataURL(file);
       if (state.sourceKind === "svg") {
         try {
-          state.svgContours = extractSvgContours(await fileToText(file));
+          const svgEntries = extractSvgContours(await fileToText(file));
+          state.svgContours = svgEntries.map((entry) => entry.points);
+          state.svgContourClosed = svgEntries.map((entry) => entry.closed);
+          state.svgContourFilled = svgEntries.map((entry) => entry.filled);
         } catch (error) {
           console.warn("Unable to read SVG vectors; falling back to rasterized image.", error);
         }
@@ -4108,8 +4240,11 @@
       ctx.stroke();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       state.fileName = "sample-shape.png";
+      state.usingSampleReference = true;
       state.sourceKind = "raster";
       state.svgContours = [];
+      state.svgContourClosed = [];
+      state.svgContourFilled = [];
       state.imageData = ctx.getImageData(0, 0, size, size);
       processCurrentImage();
     }
