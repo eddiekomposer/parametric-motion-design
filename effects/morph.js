@@ -4,7 +4,6 @@ var morphDefaults = {
   morphFrameIntervalMs: 2600,
   morphTransitionMs: 1500,
   morphShapeDetail: 48,
-  morphPairSeed: 0,
   morphBreath: 0.52,
   morphRotationDeg: 36,
   morphFusionRotationDeg: 34,
@@ -60,7 +59,7 @@ function prepareMorphEffect() {
   hideLineEditHandles();
   ensureParticleDefaultKeyframes();
   state.morphSystem.targets = config.particleKeyframes.map((frame, index) => (
-    morphShapesFromImageData(frame.imageData, `morph|${frame.id}|${frame.name}|${index}`)
+    morphShapesFromImageData(frame.imageData, `morph|${frame.id}|${frame.name}|${index}`, frame)
   ));
   state.morphSystem.lastFrameAt = null;
   state.morphSystem.fusionCanvases = null;
@@ -70,7 +69,7 @@ function morphShapePointCount() {
   return clamp(Math.round(config.morphShapeDetail || 48), 16, 96);
 }
 
-function morphShapesFromImageData(imageData, seedKey) {
+function morphShapesFromImageData(imageData, seedKey, frame = null) {
   const field = makeScalarField(imageData, "auto");
   const level = automaticContourLevel(field);
   const { mask, width, height } = foregroundMaskFromField(field, level);
@@ -90,7 +89,7 @@ function morphShapesFromImageData(imageData, seedKey) {
     .map((contour, index) => makeMorphShape(contour, `${seedKey}|${index}`))
     .filter((shape) => shape.points.length >= 8)
     .sort((a, b) => a.center.x - b.center.x || a.center.y - b.center.y || b.area - a.area);
-  return filterNestedMorphShapes(shapes);
+  return morphApplyRegionLabels(frame, filterNestedMorphShapes(shapes));
 }
 
 function makeMorphShape(contour, seedKey) {
@@ -135,6 +134,27 @@ function filterNestedMorphShapes(shapes) {
     ));
     return !container;
   });
+}
+
+function morphApplyRegionLabels(frame, shapes) {
+  const labels = morphEnsureFrameRegionLabels(frame, shapes.length);
+  return shapes.map((shape, index) => ({
+    ...shape,
+    matchId: labels[index] ?? index + 1,
+    regionIndex: index,
+  }));
+}
+
+function morphEnsureFrameRegionLabels(frame, shapeCount) {
+  if (!frame) return Array.from({ length: shapeCount }, (_, index) => index + 1);
+  const labels = Array.isArray(frame.morphRegionLabels) ? frame.morphRegionLabels.slice() : [];
+  while (labels.length < shapeCount) labels.push(labels.length + 1);
+  if (labels.length > shapeCount) labels.length = shapeCount;
+  frame.morphRegionLabels = labels.map((label, index) => {
+    const value = Math.round(Number(label));
+    return Number.isFinite(value) && value > 0 ? value : index + 1;
+  });
+  return frame.morphRegionLabels;
 }
 
 function pointInPolygon(point, polygon) {
@@ -223,26 +243,47 @@ function morphFrameShapeCount(frames) {
   return Math.max(1, ...frames.map((frame) => frame.length));
 }
 
-function morphTransitionPairs(current, next, segmentIndex) {
-  const count = morphFrameShapeCount([current, next]);
-  if (!next.length) return Array.from({ length: count }, (_, index) => ({ currentIndex: index, nextIndex: null }));
-  const permutation = morphPermutation(next.length, segmentIndex);
-  return Array.from({ length: count }, (_, index) => ({
-    currentIndex: index < current.length ? index : null,
-    nextIndex: permutation[index % permutation.length],
-  }));
+function morphTransitionPairs(current, next) {
+  const currentGroups = morphRegionGroups(current);
+  const nextGroups = morphRegionGroups(next);
+  const labels = [...new Set([...currentGroups.keys(), ...nextGroups.keys()])].sort((a, b) => a - b);
+  if (!labels.length) {
+    const count = morphFrameShapeCount([current, next]);
+    return Array.from({ length: count }, (_, index) => ({
+      currentIndex: index < current.length ? index : null,
+      nextIndex: index < next.length ? index : null,
+      matchId: index + 1,
+    }));
+  }
+  const pairs = [];
+  labels.forEach((label) => {
+    const currentItems = currentGroups.get(label) ?? [];
+    const nextItems = nextGroups.get(label) ?? [];
+    const count = Math.max(currentItems.length, nextItems.length);
+    for (let index = 0; index < count; index += 1) {
+      pairs.push({
+        currentIndex: currentItems[index]?.index ?? null,
+        nextIndex: nextItems[index]?.index ?? null,
+        matchId: label,
+      });
+    }
+  });
+  return pairs;
 }
 
-function morphPermutation(count, segmentIndex) {
-  const indices = Array.from({ length: count }, (_, index) => index);
-  if (count <= 1) return indices;
-  if (!config.morphPairSeed) return indices.slice().reverse();
-  const rng = seededRandom(`morph-pair|${config.morphPairSeed}|${segmentIndex}|${count}`);
-  for (let index = indices.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(rng() * (index + 1));
-    [indices[index], indices[swapIndex]] = [indices[swapIndex], indices[index]];
-  }
-  return indices;
+function morphRegionGroups(frame) {
+  const groups = new Map();
+  frame.forEach((shape, index) => {
+    const label = morphShapeMatchId(shape, index);
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push({ shape, index });
+  });
+  return groups;
+}
+
+function morphShapeMatchId(shape, fallbackIndex) {
+  const value = Math.round(Number(shape?.matchId));
+  return Number.isFinite(value) && value > 0 ? value : fallbackIndex + 1;
 }
 
 function morphShapeAt(frame, index, counterpart = null) {
@@ -602,18 +643,20 @@ function renderMorphEffect(now) {
   system.lastFrameAt = now;
   const mix = morphFrameMix(now);
   ctx.clearRect(0, 0, particleCanvas.width, particleCanvas.height);
+  if (renderMorphRegionLabelEditor(ctx)) {
+    return;
+  }
   if (config.morphMotionMode === "fusion") {
     renderMorphFusionEffect(ctx, mix);
     if (now - (system.lastDebugAt || 0) > 250) {
       system.lastDebugAt = now;
       window.__motionDebug.morphFrameCount = config.particleKeyframes.length;
       window.__motionDebug.morphShapeCount = morphFrameShapeCount(state.morphSystem.targets);
-      window.__motionDebug.morphPairSeed = config.morphPairSeed;
       window.__motionDebug.morphProgress = mix.progress;
     }
     return;
   }
-  const pairs = morphTransitionPairs(mix.current, mix.next, mix.index);
+  const pairs = morphTransitionPairs(mix.current, mix.next);
   ctx.fillStyle = config.morphColor;
   pairs.forEach((pair, index) => {
     const currentShape = pair.currentIndex == null ? null : mix.current[pair.currentIndex] ?? null;
@@ -626,9 +669,123 @@ function renderMorphEffect(now) {
     system.lastDebugAt = now;
     window.__motionDebug.morphFrameCount = config.particleKeyframes.length;
     window.__motionDebug.morphShapeCount = pairs.length;
-    window.__motionDebug.morphPairSeed = config.morphPairSeed;
     window.__motionDebug.morphProgress = mix.progress;
   }
+}
+
+function toggleMorphRegionLabelEditor(frameId) {
+  if (state.morphSystem.labelEditor?.frameId === frameId) {
+    state.morphSystem.labelEditor = null;
+  } else {
+    state.morphSystem.labelEditor = { frameId };
+    config.effectType = "morph";
+    if (!state.morphSystem.targets.length) prepareMorphEffect();
+  }
+  renderMotionControls();
+  updateMeta();
+  updateFormulaAndCode();
+  refreshPreviewNow();
+}
+
+function renderMorphRegionLabelEditor(ctx) {
+  const editor = state.morphSystem.labelEditor;
+  if (!editor || config.effectType !== "morph") return false;
+  const frameIndex = config.particleKeyframes.findIndex((frame) => frame.id === editor.frameId);
+  if (frameIndex < 0) {
+    state.morphSystem.labelEditor = null;
+    return false;
+  }
+  const frame = config.particleKeyframes[frameIndex];
+  let shapes = state.morphSystem.targets[frameIndex];
+  if (!shapes) {
+    shapes = morphShapesFromImageData(frame.imageData, `morph|${frame.id}|${frame.name}|${frameIndex}`, frame);
+    state.morphSystem.targets[frameIndex] = shapes;
+  }
+  morphEnsureFrameRegionLabels(frame, shapes.length);
+  shapes.forEach((shape, index) => {
+    const label = frame.morphRegionLabels[index] ?? index + 1;
+    drawMorphRegionLabelShape(ctx, shape, label);
+  });
+  window.__motionDebug.morphEditingFrame = frame.id;
+  window.__motionDebug.morphShapeCount = shapes.length;
+  return true;
+}
+
+function drawMorphRegionLabelShape(ctx, shape, label) {
+  if (!shape.points.length) return;
+  const viewport = state.particleSystem.viewport;
+  const first = particleToCanvas(shape.points[0]);
+  ctx.save();
+  ctx.fillStyle = colorToRgbaText(config.morphColor, 0.22);
+  ctx.strokeStyle = colorToRgbaText(config.morphStrokeLineColor || config.morphColor, 0.78);
+  ctx.lineWidth = Math.max(1, devicePixelRatio || 1);
+  ctx.beginPath();
+  ctx.moveTo(first.x, first.y);
+  for (let index = 0; index < shape.points.length; index += 1) {
+    const controls = bezierControls(shape.points, index, 0.92);
+    const c1 = particleToCanvas(controls.c1);
+    const c2 = particleToCanvas(controls.c2);
+    const end = particleToCanvas(closedPoint(shape.points, index + 1));
+    ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, end.x, end.y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  const center = particleToCanvas(shape.center);
+  const radius = Math.max(13, viewport.size * 0.035);
+  ctx.fillStyle = "rgba(5, 5, 7, 0.86)";
+  ctx.strokeStyle = colorToRgbaText(config.morphStrokePointColor || "#92e7d8", 0.95);
+  ctx.lineWidth = Math.max(1, devicePixelRatio || 1);
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = colorToRgbaText(config.morphStrokePointColor || "#92e7d8", 1);
+  ctx.font = `700 ${Math.max(12, radius * 0.9)}px SF Pro Display, Helvetica Neue, Arial, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(label), center.x, center.y + 0.5);
+  ctx.restore();
+}
+
+function handleMorphRegionLabelClick(event) {
+  const editor = state.morphSystem.labelEditor;
+  if (!editor || config.effectType !== "morph") return false;
+  resizeParticleCanvas();
+  const frameIndex = config.particleKeyframes.findIndex((frame) => frame.id === editor.frameId);
+  if (frameIndex < 0) return false;
+  const frame = config.particleKeyframes[frameIndex];
+  const shapes = state.morphSystem.targets[frameIndex] ?? [];
+  if (!shapes.length) return false;
+  const point = canvasToParticlePoint(event);
+  let hitIndex = shapes.findIndex((shape) => pointInPolygon(point, shape.points));
+  if (hitIndex < 0) {
+    let best = Infinity;
+    shapes.forEach((shape, index) => {
+      const score = distance(point, shape.center);
+      if (score < best) {
+        best = score;
+        hitIndex = index;
+      }
+    });
+  }
+  if (hitIndex < 0) return false;
+  const labels = morphEnsureFrameRegionLabels(frame, shapes.length);
+  const maxLabel = morphMaxEditableRegionLabel();
+  labels[hitIndex] = (labels[hitIndex] % maxLabel) + 1;
+  shapes[hitIndex].matchId = labels[hitIndex];
+  updateMeta();
+  updateFormulaAndCode();
+  refreshPreviewNow();
+  return true;
+}
+
+function morphMaxEditableRegionLabel() {
+  const targetCount = morphFrameShapeCount(state.morphSystem.targets);
+  const labelMax = Math.max(0, ...config.particleKeyframes.flatMap((frame) => (
+    Array.isArray(frame.morphRegionLabels) ? frame.morphRegionLabels.map((label) => Number(label) || 0) : []
+  )));
+  return Math.max(1, targetCount, labelMax);
 }
 
 function drawMorphShape(ctx, shape) {
@@ -1037,6 +1194,7 @@ function generateMorphStandaloneHTML() {
     center: { x: Number(shape.center.x.toFixed(3)), y: Number(shape.center.y.toFixed(3)) },
     area: Number(shape.area.toFixed(3)),
     seed: Number(shape.seed.toFixed(5)),
+    matchId: morphShapeMatchId(shape, shape.regionIndex ?? 0),
   })));
   return `<!doctype html>
 <html lang="zh-CN">
@@ -1060,7 +1218,6 @@ const config = ${JSON.stringify({
   morphFrameIntervalMs: config.morphFrameIntervalMs,
   morphTransitionMs: config.morphTransitionMs,
   morphShapeDetail: morphShapePointCount(),
-  morphPairSeed: config.morphPairSeed,
   morphBreath: config.morphBreath,
   morphRotationDeg: config.morphRotationDeg,
   morphFusionRotationDeg: config.morphFusionRotationDeg,
@@ -1199,27 +1356,45 @@ function shapeProgress(raw, index, segmentIndex) {
 function shapeCount(current, next) {
   return Math.max(1, current.length, next.length);
 }
-function transitionPairs(current, next, segmentIndex) {
-  const count = shapeCount(current, next);
-  if (!next.length) return Array.from({ length: count }, (_, index) => ({ currentIndex: index, nextIndex: null }));
-  const permutation = pairPermutation(next.length, segmentIndex);
-  return Array.from({ length: count }, (_, index) => ({
-    currentIndex: index < current.length ? index : null,
-    nextIndex: permutation[index % permutation.length],
-  }));
-}
-function pairPermutation(count, segmentIndex) {
-  const indices = Array.from({ length: count }, (_, index) => index);
-  if (count <= 1) return indices;
-  if (!config.morphPairSeed) return indices.slice().reverse();
-  const rng = seededRandom("morph-pair|" + config.morphPairSeed + "|" + segmentIndex + "|" + count);
-  for (let index = indices.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(rng() * (index + 1));
-    const temp = indices[index];
-    indices[index] = indices[swapIndex];
-    indices[swapIndex] = temp;
+function transitionPairs(current, next) {
+  const currentGroups = regionGroups(current);
+  const nextGroups = regionGroups(next);
+  const labels = [...new Set([...currentGroups.keys(), ...nextGroups.keys()])].sort((a, b) => a - b);
+  if (!labels.length) {
+    const count = shapeCount(current, next);
+    return Array.from({ length: count }, (_, index) => ({
+      currentIndex: index < current.length ? index : null,
+      nextIndex: index < next.length ? index : null,
+      matchId: index + 1,
+    }));
   }
-  return indices;
+  const pairs = [];
+  labels.forEach((label) => {
+    const currentItems = currentGroups.get(label) || [];
+    const nextItems = nextGroups.get(label) || [];
+    const count = Math.max(currentItems.length, nextItems.length);
+    for (let index = 0; index < count; index += 1) {
+      pairs.push({
+        currentIndex: currentItems[index]?.index ?? null,
+        nextIndex: nextItems[index]?.index ?? null,
+        matchId: label,
+      });
+    }
+  });
+  return pairs;
+}
+function regionGroups(frame) {
+  const groups = new Map();
+  frame.forEach((shape, index) => {
+    const label = shapeMatchId(shape, index);
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push({ shape, index });
+  });
+  return groups;
+}
+function shapeMatchId(shape, fallbackIndex) {
+  const value = Math.round(Number(shape?.matchId));
+  return Number.isFinite(value) && value > 0 ? value : fallbackIndex + 1;
 }
 function shapeAt(frame, index, counterpart = null) {
   if (!frame.length) return fallbackShape();
@@ -1883,7 +2058,7 @@ function tick(now) {
     requestAnimationFrame(tick);
     return;
   }
-  const pairs = transitionPairs(mix.current, mix.next, mix.index);
+  const pairs = transitionPairs(mix.current, mix.next);
   for (let index = 0; index < pairs.length; index += 1) {
     const pair = pairs[index];
     const currentShape = pair.currentIndex == null ? null : mix.current[pair.currentIndex] || null;

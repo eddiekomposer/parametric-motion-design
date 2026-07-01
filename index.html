@@ -580,6 +580,10 @@
       min-width: 0;
     }
 
+    .particle-row--morph {
+      grid-template-columns: 34px minmax(0, 1fr) auto auto auto;
+    }
+
     .particle-thumb {
       width: 34px;
       height: 34px;
@@ -1405,7 +1409,7 @@
   <script src="effects/particle.js"></script>
   <script src="effects/cell.js"></script>
   <script src="effects/puzzle.js"></script>
-  <script src="effects/morph.js?v=20260701-distributed-points-local-circle"></script>
+  <script src="effects/morph.js?v=20260701-region-label-pairing"></script>
   <script src="effects/neural.js"></script>
 
   <script>
@@ -1716,6 +1720,7 @@
         lastFrameAt: null,
         lastDebugAt: 0,
         fusionCanvases: null,
+        labelEditor: null,
       },
       codeUpdateTimer: null,
       cellSystem: {
@@ -3851,7 +3856,7 @@
           `points per shape = ${morphShapePointCount()}`,
           `mode = ${formatControlValue("morphMotionMode", config.morphMotionMode)}`,
           `style = ${isFusion ? "-" : formatControlValue("morphRenderMode", config.morphRenderMode)}`,
-          `pair seed = ${isFusion ? "-" : (config.morphPairSeed || "reverse")}`,
+          `pairing = ${isFusion ? "-" : "region labels"}`,
           `period = ${(config.morphFrameIntervalMs / 1000).toFixed(2)}s`,
           `duration = ${(config.morphTransitionMs / 1000).toFixed(2)}s`,
           `breath = ${Math.round(config.morphBreath * 100)}%`,
@@ -3882,9 +3887,11 @@
           "each piece is a stroked puzzle outline",
           "every generated piece keeps at least one insertable top / bottom / right side",
           "new piece fades in from the center piece insert side",
+          "new piece starts with a solid fill that fades back to outline",
           "group rotation maps the new piece to screen-right",
           "group translation moves the new piece into center",
-          "oldest piece fades out so the scene never exceeds three visible pieces",
+          "oldest piece fades out in sync with the rotation",
+          "the scene never exceeds four visible pieces",
           "",
           `pieces visible = ${pieces}`,
           `duration = ${(config.puzzleMotionDurationMs / 1000).toFixed(2)}s`,
@@ -3908,6 +3915,7 @@
           `density = ${formatControlValue("neuralDensity", config.neuralDensity)}`,
           `follow mouse = ${formatControlValue("neuralMouseFollow", config.neuralMouseFollow)}`,
           `snap cursor = ${formatControlValue("neuralSnapCursor", config.neuralSnapCursor)}`,
+          `snap interval = ${config.neuralSnapCursor && !config.neuralMouseFollow ? formatControlValue("neuralSnapIntervalMs", config.neuralSnapIntervalMs) : "-"}`,
           `cursor speed = ${config.neuralMouseFollow ? "-" : formatControlValue("neuralCursorSpeed", config.neuralCursorSpeed)}`,
           `line width = ${formatControlValue("neuralLineWidth", config.neuralLineWidth)}`,
         ].join("\n");
@@ -4437,6 +4445,11 @@
         state.particleSystem.virtualPointer = { x: point.x, y: point.y };
       }
     });
+    particleCanvas.addEventListener("click", (event) => {
+      if (config.effectType === "morph" && state.morphSystem.labelEditor) {
+        handleMorphRegionLabelClick(event);
+      }
+    });
     particleCanvas.addEventListener("pointerleave", () => {
       state.particleSystem.pointer.active = false;
       state.neuralSystem.pointer.active = false;
@@ -4576,10 +4589,11 @@
         return;
       }
       if (effectBefore === "neural") {
-        if (key === "neuralSource" || key === "neuralNodeShape" || key === "neuralMouseFollow") renderMotionControls();
+        if (key === "neuralSource" || key === "neuralNodeShape" || key === "neuralMouseFollow" || key === "neuralSnapCursor") renderMotionControls();
         if (key === "neuralDensity") config[key] = clamp(Math.round(Number(config[key]) || 13), 4, 20);
         if (key === "neuralNodeSize") config[key] = clamp(Number(config[key]) || 0, 0, 5);
         if (key === "neuralCursorSpeed") config[key] = clamp(Number(config[key]) || 0, 0, 2);
+        if (key === "neuralSnapIntervalMs") config[key] = clamp(Number(config[key]) || 900, 300, 3000);
         if (key === "neuralSource" || key === "neuralDensity") {
           processCurrentImage();
           return;

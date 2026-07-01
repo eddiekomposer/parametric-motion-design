@@ -8,6 +8,7 @@ var neuralDefaults = {
   neuralNodeShape: "circle",
   neuralMouseFollow: false,
   neuralSnapCursor: false,
+  neuralSnapIntervalMs: 900,
   neuralCursorSpeed: 1,
   neuralCursorColor: "#f6f7f1",
   neuralCursorOpacity: 0.98,
@@ -45,6 +46,7 @@ var neuralControlDefs = [
   },
   { key: "neuralMouseFollow", type: "toggle", label: "跟随鼠标", tip: "开启后光标跟随鼠标；关闭后光标在点阵中做无规律布朗运动。" },
   { key: "neuralSnapCursor", type: "toggle", label: "吸附", tip: "开启后不再绘制单独光标，而是把距离最近的点阵节点作为光标点。" },
+  { key: "neuralSnapIntervalMs", label: "闪烁间隔", min: 300, max: 3000, step: 50, showWhen: () => config.neuralSnapCursor && !config.neuralMouseFollow, tip: "控制吸附模式下光标刷新到下一个随机节点的时间间隔。" },
   { key: "neuralCursorSpeed", label: "光标速度", min: 0, max: 2, step: 0.05, showWhen: () => !config.neuralMouseFollow, tip: "控制布朗运动光标的移动速度；开启跟随鼠标时不可用。" },
   { key: "neuralCursorColor", alphaKey: "neuralCursorOpacity", type: "colorAlpha", label: "光标颜色", tip: "控制中心光标颜色和透明度。" },
   { key: "neuralCursorSize", label: "光标大小", min: 1.5, max: 10, step: 0.05, tip: "控制连接中心的光标圆点大小。" },
@@ -61,6 +63,7 @@ function prepareNeuralEffect() {
   state.neuralSystem.lastFrameAt = null;
   state.neuralSystem.cursorNodeIndex = -1;
   state.neuralSystem.snapPulseAt = 0;
+  state.neuralSystem.snapNextAt = 0;
   const cursor = state.neuralSystem.cursor;
   if (!Number.isFinite(cursor.x) || !Number.isFinite(cursor.y)) {
     cursor.x = 50;
@@ -240,6 +243,116 @@ function neuralMixColor(from, to, mix) {
   return `rgb(${r}, ${g}, ${bl})`;
 }
 
+function updateNeuralNodeDynamics(nodes, links, cursorNodeIndex, dt) {
+  const active = new Map(links.map((item) => [item.index, item.influence]));
+  nodes.forEach((node, index) => {
+    const targetInfluence = active.get(index) || 0;
+    node.renderInfluence = neuralSmoothFollow(node.renderInfluence, targetInfluence, 10, dt);
+    node.renderCursor = neuralSmoothFollow(node.renderCursor, index === cursorNodeIndex ? 1 : 0, 14, dt);
+  });
+}
+
+function neuralRenderedNodeRadius(node, ratio) {
+  if (!node) return 0;
+  const influence = Number.isFinite(node.renderInfluence) ? node.renderInfluence : 0;
+  const cursorBlend = Number.isFinite(node.renderCursor) ? node.renderCursor : 0;
+  const baseSize = clamp(Number(config.neuralNodeSize) || 0, 0, 5) * ratio;
+  const nodeSize = node.sizeJitter * (baseSize * (0.58 + influence * 1.25) + influence * ratio * 1.45);
+  const cursorSize = Math.max(0.8, Number(config.neuralCursorSize) || 3.25) * ratio;
+  return nodeSize + (cursorSize - nodeSize) * cursorBlend;
+}
+
+function neuralBoundaryInset(radius, dx, dy) {
+  if (radius <= 0.02) return 0;
+  if (config.neuralNodeShape === "square") {
+    const axis = Math.max(Math.abs(dx), Math.abs(dy), 0.0001);
+    return radius * Math.hypot(dx, dy) / axis;
+  }
+  return radius;
+}
+
+function neuralTrimmedSegment(from, to, fromRadius, toRadius, lineWidth) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  if (length <= 0.001) return null;
+  const padding = Math.max(0.2, lineWidth * 0.55);
+  let startInset = neuralBoundaryInset(fromRadius, dx, dy) + padding;
+  let endInset = neuralBoundaryInset(toRadius, -dx, -dy) + padding;
+  const maxInset = Math.max(0, length * 0.48);
+  startInset = Math.min(startInset, maxInset);
+  endInset = Math.min(endInset, maxInset);
+  const ux = dx / length;
+  const uy = dy / length;
+  return {
+    start: { x: from.x + ux * startInset, y: from.y + uy * startInset },
+    end: { x: to.x - ux * endInset, y: to.y - uy * endInset },
+  };
+}
+
+function neuralPointForNode(node) {
+  return node ? { x: node.x + (node.ox || 0), y: node.y + (node.oy || 0) } : { x: 50, y: 50 };
+}
+
+function neuralSnapInterval() {
+  return clamp(Number(config.neuralSnapIntervalMs) || neuralDefaults.neuralSnapIntervalMs, 300, 3000);
+}
+
+function neuralCursorRoamRadius(speedScale) {
+  return 13 + clamp(speedScale, 0, 2) * 12;
+}
+
+function neuralRandomRoamTarget(speedScale) {
+  const radius = neuralCursorRoamRadius(speedScale);
+  const angle = Math.random() * Math.PI * 2;
+  const distance = radius * Math.sqrt(Math.random());
+  return {
+    x: 50 + Math.cos(angle) * distance,
+    y: 50 + Math.sin(angle) * distance,
+  };
+}
+
+function chooseFarNeuralNode(nodes, currentIndex) {
+  if (!nodes.length) return null;
+  if (currentIndex < 0 || !nodes[currentIndex]) {
+    const index = Math.floor(Math.random() * nodes.length);
+    const node = nodes[index];
+    const point = neuralPointForNode(node);
+    return { node, index, x: point.x, y: point.y, distance: 0 };
+  }
+  const origin = neuralPointForNode(nodes[currentIndex]);
+  const options = nodes
+    .map((node, index) => {
+      const point = neuralPointForNode(node);
+      return { node, index, x: point.x, y: point.y, distance: Math.hypot(point.x - origin.x, point.y - origin.y) };
+    })
+    .filter((item) => item.index !== currentIndex)
+    .sort((a, b) => b.distance - a.distance);
+  if (!options.length) return null;
+  const farEnough = options.filter((item) => item.distance >= 24);
+  const pool = farEnough.length >= 3 ? farEnough : options.slice(0, Math.max(1, Math.ceil(options.length * 0.45)));
+  const weightedTotal = pool.reduce((sum, item) => sum + item.distance * item.distance, 0);
+  let pick = Math.random() * weightedTotal;
+  for (const item of pool) {
+    pick -= item.distance * item.distance;
+    if (pick <= 0) return item;
+  }
+  return pool[pool.length - 1];
+}
+
+function neuralSnapNode(system, rawCursor, now) {
+  if (!config.neuralSnapCursor) return null;
+  if (config.neuralMouseFollow && system.pointer.active) return nearestNeuralNode(system.nodes, rawCursor);
+  const current = system.cursorNodeIndex >= 0 ? system.nodes[system.cursorNodeIndex] : null;
+  if (current && now < (system.snapNextAt || 0)) {
+    const point = neuralPointForNode(current);
+    return { node: current, index: system.cursorNodeIndex, x: point.x, y: point.y, distance: 0 };
+  }
+  const picked = chooseFarNeuralNode(system.nodes, system.cursorNodeIndex);
+  system.snapNextAt = now + neuralSnapInterval();
+  return picked;
+}
+
 function updateNeuralCursor(system, dt, now) {
   const cursor = system.cursor;
   const pointer = system.pointer;
@@ -254,15 +367,27 @@ function updateNeuralCursor(system, dt, now) {
   }
   if (!Number.isFinite(cursor.driftAngle)) cursor.driftAngle = -0.4;
   const speedScale = clamp(Number(config.neuralCursorSpeed) || 0, 0, 2);
-  const motionScale = 0.12 + speedScale * 0.88;
-  const turn = Math.sin(now * 0.00031 + cursor.x * 0.017) * 0.010 + Math.cos(now * 0.00023 + cursor.y * 0.019) * 0.008;
+  const motionScale = 0.2 + speedScale * 0.8;
+  const roamRadius = neuralCursorRoamRadius(speedScale);
+  if (!Number.isFinite(cursor.roamX) || !Number.isFinite(cursor.roamY) || now > (cursor.roamUntil || 0) || Math.hypot(cursor.roamX - cursor.x, cursor.roamY - cursor.y) < 5.5) {
+    const target = neuralRandomRoamTarget(speedScale);
+    cursor.roamX = target.x;
+    cursor.roamY = target.y;
+    cursor.roamUntil = now + 1150 + Math.random() * 1300;
+  }
+  const roamPullX = (cursor.roamX - cursor.x) * 0.0026 * motionScale;
+  const roamPullY = (cursor.roamY - cursor.y) * 0.0026 * motionScale;
+  const outside = Math.hypot(cursor.x - 50, cursor.y - 50) / Math.max(1, roamRadius);
+  const centerPull = Math.max(0, outside - 0.78) * 0.006 * motionScale;
+  const desiredAngle = Math.atan2(roamPullY - (cursor.y - 50) * centerPull, roamPullX - (cursor.x - 50) * centerPull);
+  let angleDelta = desiredAngle - cursor.driftAngle;
+  angleDelta = Math.atan2(Math.sin(angleDelta), Math.cos(angleDelta));
+  const turn = angleDelta * 0.045 + Math.sin(now * 0.00045 + cursor.x * 0.021) * 0.004;
   cursor.driftAngle += turn;
-  const centerPullX = (50 - cursor.x) * 0.0019 * motionScale;
-  const centerPullY = (50 - cursor.y) * 0.0019 * motionScale;
-  cursor.vx += Math.cos(cursor.driftAngle) * 0.010 * motionScale + centerPullX;
-  cursor.vy += Math.sin(cursor.driftAngle) * 0.010 * motionScale + centerPullY;
+  cursor.vx += Math.cos(cursor.driftAngle) * 0.005 * motionScale + roamPullX - (cursor.x - 50) * centerPull;
+  cursor.vy += Math.sin(cursor.driftAngle) * 0.005 * motionScale + roamPullY - (cursor.y - 50) * centerPull;
   const speed = Math.hypot(cursor.vx, cursor.vy);
-  const maxSpeed = 0.19 * motionScale;
+  const maxSpeed = 0.18 + 0.15 * speedScale;
   if (speed > maxSpeed) {
     cursor.vx = (cursor.vx / speed) * maxSpeed;
     cursor.vy = (cursor.vy / speed) * maxSpeed;
@@ -271,7 +396,7 @@ function updateNeuralCursor(system, dt, now) {
   cursor.y += cursor.vy;
   cursor.vx *= 0.992;
   cursor.vy *= 0.992;
-  const margin = 11;
+  const margin = 8;
   if (cursor.x < margin || cursor.x > 100 - margin) {
     cursor.vx *= -0.62;
     cursor.driftAngle = Math.PI - cursor.driftAngle;
@@ -342,7 +467,7 @@ function renderNeuralEffect(now) {
     ctx.fillRect(0, 0, particleCanvas.width, particleCanvas.height);
   }
   const rawCursor = system.cursor;
-  const snapped = config.neuralSnapCursor ? nearestNeuralNode(system.nodes, rawCursor) : null;
+  const snapped = neuralSnapNode(system, rawCursor, now);
   const cursor = snapped ? { x: snapped.x, y: snapped.y } : rawCursor;
   const nextCursorNodeIndex = snapped ? snapped.index : -1;
   if (config.neuralSnapCursor && nextCursorNodeIndex !== system.cursorNodeIndex) {
@@ -351,8 +476,9 @@ function renderNeuralEffect(now) {
   system.cursorNodeIndex = nextCursorNodeIndex;
   const links = neuralActiveLinks(system.nodes, cursor, system.cursorNodeIndex);
   system.links = links;
+  updateNeuralNodeDynamics(system.nodes, links, system.cursorNodeIndex, dt);
   const pulse = config.neuralSnapCursor ? neuralPulseState(system, now) : null;
-  drawNeuralLinks(ctx, links, cursor, pulse);
+  drawNeuralLinks(ctx, links, cursor, pulse, system.nodes[system.cursorNodeIndex]);
   drawNeuralNodes(ctx, system.nodes, links, cursor, now, system.cursorNodeIndex, dt);
   if (!snapped) drawNeuralCursor(ctx, cursor, now);
   window.__motionDebug.neuralNodeCount = system.nodes.length;
@@ -364,9 +490,12 @@ function neuralToCanvas(point) {
   return particleToCanvas(point);
 }
 
-function drawNeuralLinks(ctx, links, cursor, pulse = null) {
+function drawNeuralLinks(ctx, links, cursor, pulse = null, cursorNode = null) {
   const cursorPoint = neuralToCanvas(cursor);
   const ratio = window.devicePixelRatio || 1;
+  const cursorRadius = cursorNode
+    ? neuralRenderedNodeRadius(cursorNode, ratio)
+    : Math.max(0.8, Number(config.neuralCursorSize) || 3.25) * ratio;
   ctx.save();
   ctx.strokeStyle = config.neuralLineColor;
   ctx.lineCap = "round";
@@ -377,12 +506,14 @@ function drawNeuralLinks(ctx, links, cursor, pulse = null) {
     if (local <= 0.001) return;
     const lineAlpha = clamp(config.neuralLineOpacity, 0, 1) * (0.14 + item.influence * 0.86);
     const electric = pulse?.active ? Math.sin(clamp(rawLocal, 0, 1) * Math.PI) : 0;
-    const targetX = cursorPoint.x + (point.x - cursorPoint.x) * local;
-    const targetY = cursorPoint.y + (point.y - cursorPoint.y) * local;
     ctx.globalAlpha = lineAlpha * Math.min(1, local * (1.05 + electric * 0.38));
     ctx.lineWidth = Math.max(0.35, Number(config.neuralLineWidth) || 1) * ratio * (0.72 + item.influence * 0.62);
+    const segment = neuralTrimmedSegment(cursorPoint, point, cursorRadius, neuralRenderedNodeRadius(item.node, ratio), ctx.lineWidth);
+    if (!segment) return;
+    const targetX = segment.start.x + (segment.end.x - segment.start.x) * local;
+    const targetY = segment.start.y + (segment.end.y - segment.start.y) * local;
     ctx.beginPath();
-    ctx.moveTo(cursorPoint.x, cursorPoint.y);
+    ctx.moveTo(segment.start.x, segment.start.y);
     ctx.lineTo(targetX, targetY);
     ctx.stroke();
     if (pulse?.active && electric > 0.08) {
@@ -391,8 +522,8 @@ function drawNeuralLinks(ctx, links, cursor, pulse = null) {
       ctx.globalAlpha = lineAlpha * electric;
       ctx.lineWidth *= 1.55;
       ctx.beginPath();
-      ctx.moveTo(cursorPoint.x + (point.x - cursorPoint.x) * tail, cursorPoint.y + (point.y - cursorPoint.y) * tail);
-      ctx.lineTo(cursorPoint.x + (point.x - cursorPoint.x) * head, cursorPoint.y + (point.y - cursorPoint.y) * head);
+      ctx.moveTo(segment.start.x + (segment.end.x - segment.start.x) * tail, segment.start.y + (segment.end.y - segment.start.y) * tail);
+      ctx.lineTo(segment.start.x + (segment.end.x - segment.start.x) * head, segment.start.y + (segment.end.y - segment.start.y) * head);
       ctx.stroke();
     }
   });
@@ -400,19 +531,12 @@ function drawNeuralLinks(ctx, links, cursor, pulse = null) {
 }
 
 function drawNeuralNodes(ctx, nodes, links, cursor, now, cursorNodeIndex = -1, dt = 1 / 60) {
-  const active = new Map(links.map((item) => [item.index, item.influence]));
   const ratio = window.devicePixelRatio || 1;
-  const baseSize = clamp(Number(config.neuralNodeSize) || 0, 0, 5) * ratio;
   nodes.forEach((node, index) => {
-    const targetInfluence = active.get(index) || 0;
-    node.renderInfluence = neuralSmoothFollow(node.renderInfluence, targetInfluence, 10, dt);
-    node.renderCursor = neuralSmoothFollow(node.renderCursor, index === cursorNodeIndex ? 1 : 0, 14, dt);
     const influence = node.renderInfluence;
     const cursorBlend = node.renderCursor;
     const twinkle = 0.5 + Math.sin(now * 0.0021 + node.pulse) * 0.5;
-    const nodeSize = node.sizeJitter * (baseSize * (0.58 + influence * 1.25) + influence * ratio * 1.45);
-    const cursorSize = Math.max(0.8, Number(config.neuralCursorSize) || 3.25) * ratio;
-    const size = nodeSize + (cursorSize - nodeSize) * cursorBlend;
+    const size = neuralRenderedNodeRadius(node, ratio);
     if (size <= 0.02) return;
     const point = neuralToCanvas({ x: node.x + node.ox, y: node.y + node.oy });
     ctx.save();
@@ -489,6 +613,7 @@ const config = ${JSON.stringify({
   neuralNodeShape: config.neuralNodeShape,
   neuralMouseFollow: config.neuralMouseFollow,
   neuralSnapCursor: config.neuralSnapCursor,
+  neuralSnapIntervalMs: config.neuralSnapIntervalMs,
   neuralCursorSpeed: config.neuralCursorSpeed,
   neuralCursorColor: config.neuralCursorColor,
   neuralCursorOpacity: config.neuralCursorOpacity,
@@ -505,6 +630,7 @@ let viewport = { x: 0, y: 0, size: 1, width: 1, height: 1 };
 let lastFrameAt = null;
 let snapIndex = -1;
 let snapPulseAt = 0;
+let snapNextAt = 0;
 function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
 function easeOutCubic(value) {
   const t = clamp(value, 0, 1);
@@ -535,6 +661,87 @@ function mixColor(from, to, mix) {
   const g = Math.round(a.g + (b.g - a.g) * t);
   const bl = Math.round(a.b + (b.b - a.b) * t);
   return "rgb(" + r + ", " + g + ", " + bl + ")";
+}
+function renderedNodeRadius(node, ratio) {
+  if (!node) return 0;
+  const influence = Number.isFinite(node.renderInfluence) ? node.renderInfluence : 0;
+  const cursorBlend = Number.isFinite(node.renderCursor) ? node.renderCursor : 0;
+  const nodeSize = node.sizeJitter * (Math.min(5, Math.max(0, config.neuralNodeSize || 0)) * ratio * (0.58 + influence * 1.25) + influence * ratio * 1.45);
+  const cursorSize = Math.max(0.8, config.neuralCursorSize || 3.25) * ratio;
+  return nodeSize + (cursorSize - nodeSize) * cursorBlend;
+}
+function boundaryInset(radius, dx, dy) {
+  if (radius <= 0.02) return 0;
+  if (config.neuralNodeShape === "square") {
+    const axis = Math.max(Math.abs(dx), Math.abs(dy), 0.0001);
+    return radius * Math.hypot(dx, dy) / axis;
+  }
+  return radius;
+}
+function trimmedSegment(from, to, fromRadius, toRadius, lineWidth) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  if (length <= 0.001) return null;
+  const padding = Math.max(0.2, lineWidth * 0.55);
+  let startInset = boundaryInset(fromRadius, dx, dy) + padding;
+  let endInset = boundaryInset(toRadius, -dx, -dy) + padding;
+  const maxInset = Math.max(0, length * 0.48);
+  startInset = Math.min(startInset, maxInset);
+  endInset = Math.min(endInset, maxInset);
+  const ux = dx / length;
+  const uy = dy / length;
+  return {
+    start: { x: from.x + ux * startInset, y: from.y + uy * startInset },
+    end: { x: to.x - ux * endInset, y: to.y - uy * endInset },
+  };
+}
+function snapInterval() {
+  return clamp(config.neuralSnapIntervalMs || 900, 300, 3000);
+}
+function cursorRoamRadius(speedScale) {
+  return 13 + Math.max(0, Math.min(2, speedScale)) * 12;
+}
+function randomRoamTarget(speedScale) {
+  const radius = cursorRoamRadius(speedScale);
+  const angle = Math.random() * Math.PI * 2;
+  const distance = radius * Math.sqrt(Math.random());
+  return {
+    x: 50 + Math.cos(angle) * distance,
+    y: 50 + Math.sin(angle) * distance,
+  };
+}
+function chooseFarNode(currentIndex) {
+  if (!nodes.length) return null;
+  if (currentIndex < 0 || !nodes[currentIndex]) {
+    const index = Math.floor(Math.random() * nodes.length);
+    return { node: nodes[index], index, distance: 0 };
+  }
+  const origin = nodes[currentIndex];
+  const options = nodes.map((node, index) => ({
+    node,
+    index,
+    distance: Math.hypot(node.x - origin.x, node.y - origin.y),
+  })).filter((item) => item.index !== currentIndex).sort((a, b) => b.distance - a.distance);
+  if (!options.length) return null;
+  const farEnough = options.filter((item) => item.distance >= 24);
+  const pool = farEnough.length >= 3 ? farEnough : options.slice(0, Math.max(1, Math.ceil(options.length * 0.45)));
+  const weightedTotal = pool.reduce((sum, item) => sum + item.distance * item.distance, 0);
+  let pick = Math.random() * weightedTotal;
+  for (const item of pool) {
+    pick -= item.distance * item.distance;
+    if (pick <= 0) return item;
+  }
+  return pool[pool.length - 1];
+}
+function snappedNode(now) {
+  if (!config.neuralSnapCursor) return null;
+  if (config.neuralMouseFollow && pointer.active) return nearestNode();
+  const current = snapIndex >= 0 ? nodes[snapIndex] : null;
+  if (current && now < snapNextAt) return { node: current, index: snapIndex, distance: 0 };
+  const picked = chooseFarNode(snapIndex);
+  snapNextAt = now + snapInterval();
+  return picked;
 }
 function resize() {
   const rect = canvas.getBoundingClientRect();
@@ -569,21 +776,36 @@ function updateCursor(dt, now) {
   }
   if (!Number.isFinite(cursor.driftAngle)) cursor.driftAngle = -0.4;
   const speedScale = Math.max(0, Math.min(2, config.neuralCursorSpeed || 0));
-  const motionScale = 0.12 + speedScale * 0.88;
-  const turn = Math.sin(now * 0.00031 + cursor.x * 0.017) * 0.010 + Math.cos(now * 0.00023 + cursor.y * 0.019) * 0.008;
+  const motionScale = 0.2 + speedScale * 0.8;
+  const roamRadius = cursorRoamRadius(speedScale);
+  if (!Number.isFinite(cursor.roamX) || !Number.isFinite(cursor.roamY) || now > (cursor.roamUntil || 0) || Math.hypot(cursor.roamX - cursor.x, cursor.roamY - cursor.y) < 5.5) {
+    const target = randomRoamTarget(speedScale);
+    cursor.roamX = target.x;
+    cursor.roamY = target.y;
+    cursor.roamUntil = now + 1150 + Math.random() * 1300;
+  }
+  const roamPullX = (cursor.roamX - cursor.x) * 0.0026 * motionScale;
+  const roamPullY = (cursor.roamY - cursor.y) * 0.0026 * motionScale;
+  const outside = Math.hypot(cursor.x - 50, cursor.y - 50) / Math.max(1, roamRadius);
+  const centerPull = Math.max(0, outside - 0.78) * 0.006 * motionScale;
+  const desiredAngle = Math.atan2(roamPullY - (cursor.y - 50) * centerPull, roamPullX - (cursor.x - 50) * centerPull);
+  let angleDelta = desiredAngle - cursor.driftAngle;
+  angleDelta = Math.atan2(Math.sin(angleDelta), Math.cos(angleDelta));
+  const turn = angleDelta * 0.045 + Math.sin(now * 0.00045 + cursor.x * 0.021) * 0.004;
   cursor.driftAngle += turn;
-  cursor.vx += Math.cos(cursor.driftAngle) * 0.010 * motionScale + (50 - cursor.x) * 0.0019 * motionScale;
-  cursor.vy += Math.sin(cursor.driftAngle) * 0.010 * motionScale + (50 - cursor.y) * 0.0019 * motionScale;
+  cursor.vx += Math.cos(cursor.driftAngle) * 0.005 * motionScale + roamPullX - (cursor.x - 50) * centerPull;
+  cursor.vy += Math.sin(cursor.driftAngle) * 0.005 * motionScale + roamPullY - (cursor.y - 50) * centerPull;
   const speed = Math.hypot(cursor.vx, cursor.vy);
-  if (speed > 0.19 * motionScale) {
-    cursor.vx = cursor.vx / speed * 0.19 * motionScale;
-    cursor.vy = cursor.vy / speed * 0.19 * motionScale;
+  const maxSpeed = 0.18 + 0.15 * speedScale;
+  if (speed > maxSpeed) {
+    cursor.vx = cursor.vx / speed * maxSpeed;
+    cursor.vy = cursor.vy / speed * maxSpeed;
   }
   cursor.x += cursor.vx;
   cursor.y += cursor.vy;
   cursor.vx *= 0.992;
   cursor.vy *= 0.992;
-  const margin = 11;
+  const margin = 8;
   if (cursor.x < margin || cursor.x > 100 - margin) {
     cursor.vx *= -0.62;
     cursor.driftAngle = Math.PI - cursor.driftAngle;
@@ -628,14 +850,21 @@ function draw(now) {
   ctx.fillStyle = "${background}";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   const ratio = window.devicePixelRatio || 1;
-  const snapped = config.neuralSnapCursor ? nearestNode() : null;
+  const snapped = snappedNode(now);
   const nextSnapIndex = snapped ? snapped.index : -1;
   if (config.neuralSnapCursor && nextSnapIndex !== snapIndex) snapPulseAt = now;
   snapIndex = nextSnapIndex;
   const pulse = config.neuralSnapCursor ? pulseState(now) : null;
   const effectiveCursor = snapped ? snapped.node : cursor;
   const links = activeLinks(effectiveCursor, snapped ? snapped.index : -1);
+  const active = new Map(links.map((item) => [item.index, item.influence]));
+  nodes.forEach((node, index) => {
+    const targetInfluence = active.get(index) || 0;
+    node.renderInfluence = smoothFollow(node.renderInfluence, targetInfluence, 10, dt);
+    node.renderCursor = smoothFollow(node.renderCursor, snapped && index === snapped.index ? 1 : 0, 14, dt);
+  });
   const cursorPoint = toCanvas(effectiveCursor);
+  const cursorRadius = snapped ? renderedNodeRadius(snapped.node, ratio) : Math.max(0.8, config.neuralCursorSize || 3.25) * ratio;
   ctx.strokeStyle = config.neuralLineColor;
   ctx.lineCap = "round";
   links.forEach((item, index) => {
@@ -645,12 +874,14 @@ function draw(now) {
     if (local <= 0.001) return;
     const lineAlpha = clamp(config.neuralLineOpacity, 0, 1) * (0.14 + item.influence * 0.86);
     const electric = pulse && pulse.active ? Math.sin(clamp(rawLocal, 0, 1) * Math.PI) : 0;
-    const targetX = cursorPoint.x + (point.x - cursorPoint.x) * local;
-    const targetY = cursorPoint.y + (point.y - cursorPoint.y) * local;
     ctx.globalAlpha = lineAlpha * Math.min(1, local * (1.05 + electric * 0.38));
     ctx.lineWidth = Math.max(0.35, config.neuralLineWidth || 1) * ratio * (0.72 + item.influence * 0.62);
+    const segment = trimmedSegment(cursorPoint, point, cursorRadius, renderedNodeRadius(item.node, ratio), ctx.lineWidth);
+    if (!segment) return;
+    const targetX = segment.start.x + (segment.end.x - segment.start.x) * local;
+    const targetY = segment.start.y + (segment.end.y - segment.start.y) * local;
     ctx.beginPath();
-    ctx.moveTo(cursorPoint.x, cursorPoint.y);
+    ctx.moveTo(segment.start.x, segment.start.y);
     ctx.lineTo(targetX, targetY);
     ctx.stroke();
     if (pulse && pulse.active && electric > 0.08) {
@@ -659,23 +890,17 @@ function draw(now) {
       ctx.globalAlpha = lineAlpha * electric;
       ctx.lineWidth *= 1.55;
       ctx.beginPath();
-      ctx.moveTo(cursorPoint.x + (point.x - cursorPoint.x) * tail, cursorPoint.y + (point.y - cursorPoint.y) * tail);
-      ctx.lineTo(cursorPoint.x + (point.x - cursorPoint.x) * head, cursorPoint.y + (point.y - cursorPoint.y) * head);
+      ctx.moveTo(segment.start.x + (segment.end.x - segment.start.x) * tail, segment.start.y + (segment.end.y - segment.start.y) * tail);
+      ctx.lineTo(segment.start.x + (segment.end.x - segment.start.x) * head, segment.start.y + (segment.end.y - segment.start.y) * head);
       ctx.stroke();
     }
   });
-  const active = new Map(links.map((item) => [item.index, item.influence]));
   ctx.fillStyle = config.neuralNodeColor;
   nodes.forEach((node, index) => {
-    const targetInfluence = active.get(index) || 0;
-    node.renderInfluence = smoothFollow(node.renderInfluence, targetInfluence, 10, dt);
-    node.renderCursor = smoothFollow(node.renderCursor, snapped && index === snapped.index ? 1 : 0, 14, dt);
     const influence = node.renderInfluence;
     const cursorBlend = node.renderCursor;
     const twinkle = 0.5 + Math.sin(now * 0.0021 + node.pulse) * 0.5;
-    const nodeSize = node.sizeJitter * (Math.min(5, Math.max(0, config.neuralNodeSize || 0)) * ratio * (0.58 + influence * 1.25) + influence * ratio * 1.45);
-    const cursorSize = Math.max(0.8, config.neuralCursorSize || 3.25) * ratio;
-    const size = nodeSize + (cursorSize - nodeSize) * cursorBlend;
+    const size = renderedNodeRadius(node, ratio);
     if (size <= 0.02) return;
     const point = toCanvas(node);
     ctx.fillStyle = mixColor(config.neuralNodeColor, config.neuralCursorColor, cursorBlend);

@@ -106,11 +106,9 @@ function renderParticleKeyframeEditor(container) {
   ensureParticleDefaultKeyframes();
   const editor = document.createElement("div");
   editor.className = "keyframe-editor";
-  const morphPairButton = config.effectType === "morph" ? '<button class="small-btn" type="button" data-particle-frame-action="rematch">重新配队</button>' : '';
   editor.innerHTML = `
     <div class="keyframe-head keyframe-head--actions-only">
       <div class="panel-actions">
-        ${morphPairButton}
         <button class="small-btn" type="button" data-particle-frame-action="add">添加图片</button>
       </div>
     </div>
@@ -119,13 +117,14 @@ function renderParticleKeyframeEditor(container) {
   const list = editor.querySelector(".keyframe-list");
   config.particleKeyframes.forEach((frame, index) => {
     const row = document.createElement("div");
-    row.className = "particle-row";
+    row.className = `particle-row${config.effectType === "morph" ? " particle-row--morph" : ""}`;
     row.innerHTML = `
       <img class="particle-thumb" src="${frame.preview || ""}" alt="">
       <div>
         <div class="particle-name">${escapeHtml(frame.name || `关键帧 ${index + 1}`)}</div>
         <div class="particle-subtitle">${frame.width || 0}x${frame.height || 0}</div>
       </div>
+      ${config.effectType === "morph" ? `<button class="small-btn" type="button" data-particle-frame-action="edit-regions" data-particle-frame-id="${frame.id}">${state.morphSystem.labelEditor?.frameId === frame.id ? "完成" : "编辑"}</button>` : ""}
       <button class="small-btn" type="button" data-particle-frame-action="replace" data-particle-frame-id="${frame.id}">上传</button>
       <button class="icon-btn" type="button" data-particle-frame-action="delete" data-particle-frame-id="${frame.id}" aria-label="删除参考图 ${index + 1}">×</button>
     `;
@@ -135,24 +134,22 @@ function renderParticleKeyframeEditor(container) {
     const button = event.target.closest("[data-particle-frame-action]");
     if (!button) return;
     const action = button.dataset.particleFrameAction;
-    if (action === "rematch") {
-      config.morphPairSeed = Math.floor(Math.random() * 1000000);
-      state.startedAt = performance.now();
-      updateMeta();
-      updateFormulaAndCode();
-      return;
-    }
     if (action === "add") {
       requestParticleFrameUpload(null);
       return;
     }
     const frameId = Number(button.dataset.particleFrameId);
+    if (action === "edit-regions") {
+      toggleMorphRegionLabelEditor(frameId);
+      return;
+    }
     if (action === "replace") {
       requestParticleFrameUpload(frameId);
       return;
     }
     if (action === "delete" && config.particleKeyframes.length > 1) {
       config.particleKeyframes = config.particleKeyframes.filter((frame) => frame.id !== frameId);
+      if (state.morphSystem.labelEditor?.frameId === frameId) state.morphSystem.labelEditor = null;
       renderMotionControls();
       activeEffect().prepare();
       state.startedAt = performance.now();
@@ -286,6 +283,7 @@ function makeParticleFrameFromImageData(imageData, name, id = Date.now()) {
     height: imageData.height,
     imageData,
     preview: imageDataToPreviewURL(imageData),
+    morphRegionLabels: [],
   };
 }
 
