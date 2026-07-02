@@ -34,7 +34,7 @@ var morphControlDefs = [
   { key: "morphShapeDetail", label: "形状细节", min: 16, max: 96, step: 1, tip: "控制每个独立形状轮廓的采样点数。数值越高，不规则形状保留越完整。" },
   { key: "morphBreath", label: "呼吸感", min: 0, max: 1, step: 0.01, tip: "控制整体形状过渡时的柔和呼吸、轻微漂浮和弹性感。" },
   { key: "morphRotationDeg", label: "旋转角度", min: -180, max: 180, step: 1, showWhen: () => config.morphMotionMode === "morph", tip: "控制关键帧过渡过程中的形状姿态旋转。起点和终点保持原图朝向，正负值决定中间旋转方向。" },
-  { key: "morphFusionRotationDeg", label: "旋转角度", min: -180, max: 180, step: 1, showWhen: () => config.morphMotionMode === "fusion", tip: "融合过渡时当前形状和下一形状围绕自身中心错位旋转的角度。" },
+  { key: "morphFusionRotationDeg", label: "旋转角度", min: -180, max: 180, step: 1, showWhen: () => config.morphMotionMode === "fusion", tip: "融合过渡时整组图案围绕画布中心错位旋转的角度。" },
   {
     key: "morphRenderMode",
     type: "segmented",
@@ -542,16 +542,16 @@ function rotatedMorphCanvasPoint(point, center, angle) {
   };
 }
 
-function drawMorphFusionPath(ctx, shape, rotation) {
+function drawMorphFusionPath(ctx, shape, rotation, rotationCenter) {
   if (!shape.points.length) return;
-  const first = rotatedMorphCanvasPoint(shape.points[0], shape.center, rotation);
+  const first = rotatedMorphCanvasPoint(shape.points[0], rotationCenter, rotation);
   ctx.beginPath();
   ctx.moveTo(first.x, first.y);
   for (let index = 0; index < shape.points.length; index += 1) {
     const controls = bezierControls(shape.points, index, 0.92);
-    const c1 = rotatedMorphCanvasPoint(controls.c1, shape.center, rotation);
-    const c2 = rotatedMorphCanvasPoint(controls.c2, shape.center, rotation);
-    const end = rotatedMorphCanvasPoint(closedPoint(shape.points, index + 1), shape.center, rotation);
+    const c1 = rotatedMorphCanvasPoint(controls.c1, rotationCenter, rotation);
+    const c2 = rotatedMorphCanvasPoint(controls.c2, rotationCenter, rotation);
+    const end = rotatedMorphCanvasPoint(closedPoint(shape.points, index + 1), rotationCenter, rotation);
     ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, end.x, end.y);
   }
   ctx.closePath();
@@ -566,7 +566,8 @@ function drawMorphFusionField(fieldCtx, width, height, scale, shapes, rotation, 
   fieldCtx.filter = `blur(${Math.max(0, blurPx * scale).toFixed(2)}px)`;
   fieldCtx.fillStyle = "#ffffff";
   fieldCtx.globalAlpha = 1;
-  shapes.forEach((shape) => drawMorphFusionPath(fieldCtx, shape, rotation));
+  const rotationCenter = { x: 50, y: 50 };
+  shapes.forEach((shape) => drawMorphFusionPath(fieldCtx, shape, rotation, rotationCenter));
   fieldCtx.restore();
   fieldCtx.filter = "none";
 }
@@ -1609,16 +1610,16 @@ function rotatedCanvasPoint(point, center, angle) {
   const sin = Math.sin(angle);
   return { x: canvasCenter.x + dx * cos - dy * sin, y: canvasCenter.y + dx * sin + dy * cos };
 }
-function drawFusionPath(targetCtx, shape, rotation) {
+function drawFusionPath(targetCtx, shape, rotation, rotationCenter) {
   if (!shape.points.length) return;
-  const first = rotatedCanvasPoint(shape.points[0], shape.center, rotation);
+  const first = rotatedCanvasPoint(shape.points[0], rotationCenter, rotation);
   targetCtx.beginPath();
   targetCtx.moveTo(first.x, first.y);
   for (let index = 0; index < shape.points.length; index += 1) {
     const controls = bezierControls(shape.points, index, 0.92);
-    const c1 = rotatedCanvasPoint(controls.c1, shape.center, rotation);
-    const c2 = rotatedCanvasPoint(controls.c2, shape.center, rotation);
-    const end = rotatedCanvasPoint(closedPoint(shape.points, index + 1), shape.center, rotation);
+    const c1 = rotatedCanvasPoint(controls.c1, rotationCenter, rotation);
+    const c2 = rotatedCanvasPoint(controls.c2, rotationCenter, rotation);
+    const end = rotatedCanvasPoint(closedPoint(shape.points, index + 1), rotationCenter, rotation);
     targetCtx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, end.x, end.y);
   }
   targetCtx.closePath();
@@ -1631,7 +1632,8 @@ function drawFusionField(fieldCtx, width, height, scale, shapes, rotation, blurP
   fieldCtx.setTransform(scale, 0, 0, scale, 0, 0);
   fieldCtx.filter = "blur(" + Math.max(0, blurPx * scale).toFixed(2) + "px)";
   fieldCtx.fillStyle = "#ffffff";
-  shapes.forEach((shape) => drawFusionPath(fieldCtx, shape, rotation));
+  const rotationCenter = { x: 50, y: 50 };
+  shapes.forEach((shape) => drawFusionPath(fieldCtx, shape, rotation, rotationCenter));
   fieldCtx.restore();
   fieldCtx.filter = "none";
 }
