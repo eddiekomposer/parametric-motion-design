@@ -2,7 +2,7 @@
 var puzzleDefaults = {
   puzzleMotionDurationMs: 1150,
   puzzleMotionIntervalMs: 2400,
-  puzzleStrokeWidth: 0.16,
+  puzzleStrokeWidth: 2,
   puzzleStrokeColor: "#8F959E",
   puzzleStrokeOpacity: 0.96,
 };
@@ -10,7 +10,7 @@ var puzzleDefaults = {
 var puzzleControlDefs = [
   { key: "puzzleMotionDurationMs", label: "动效时长", min: 450, max: 2800, step: 50, tip: "控制一次插入、旋转、居中和淡出的总时长。" },
   { key: "puzzleMotionIntervalMs", label: "动效间隔", min: 800, max: 5200, step: 100, tip: "控制新拼图出现的周期。" },
-  { key: "puzzleStrokeWidth", label: "线框粗细", min: 0.03, max: 0.72, step: 0.01, tip: "控制拼图线框的描边宽度。描边会压在拼图轮廓内部。" },
+  { key: "puzzleStrokeWidth", label: "线框粗细", min: 0, max: 8, step: 0.1, tip: "控制拼图线框的描边宽度，单位为 dp。描边会压在拼图轮廓内部。" },
   { key: "puzzleStrokeColor", alphaKey: "puzzleStrokeOpacity", type: "colorAlpha", label: "线框颜色", tip: "控制拼图线框颜色和透明度。" },
 ];
 
@@ -58,6 +58,8 @@ var puzzleShapeTemplates = [
 ];
 
 function preparePuzzleEffect() {
+  puzzleNormalizeStrokeWidthDp();
+  const seed = puzzleCreateRandomSeed("live");
   hideParticles();
   hideLineGroup();
   hideSineGroup();
@@ -67,37 +69,72 @@ function preparePuzzleEffect() {
   state.samples = [];
   state.coefficients = [];
   state.puzzleSystem = {
-    cache: [puzzleInitialState()],
+    seed,
+    cache: [puzzleInitialState(`${seed}|initial`)],
+    transitions: [],
     lastCycle: -1,
     lastFrame: null,
   };
 }
 
-function puzzleInitialState() {
-  const first = puzzleCreatePiece(1, "right", 1);
+function puzzleNormalizeStrokeWidthDp() {
+  const width = Number(config.puzzleStrokeWidth);
+  if (!Number.isFinite(width)) config.puzzleStrokeWidth = puzzleDefaults.puzzleStrokeWidth;
+  else if (width < 0) config.puzzleStrokeWidth = 0;
+  else config.puzzleStrokeWidth = Math.min(8, width);
+}
+
+function puzzleStrokeWidthDp() {
+  const width = Number(config.puzzleStrokeWidth);
+  if (!Number.isFinite(width)) return puzzleDefaults.puzzleStrokeWidth;
+  return clamp(width, 0, 8);
+}
+
+function puzzleStrokeWidthLocalUnits(viewport) {
+  const ratio = window.devicePixelRatio || 1;
+  const canvasPx = puzzleStrokeWidthDp() * ratio;
+  return canvasPx / Math.max(0.0001, viewport.size / 100);
+}
+
+function puzzleInitialState(randomSeed = "initial") {
+  const first = puzzleCreatePiece(1, "right", 1, {}, randomSeed);
   first.x = 0;
   first.y = 0;
   first.angle = 0;
   return { pieces: [first], activeId: first.id, nextId: 2 };
 }
 
-function puzzleCreatePiece(id, matchSide, matchValue, requiredSides = {}) {
+function puzzleCreatePiece(id, matchSide, matchValue, requiredSides = {}, randomSeed = "") {
   const required = { ...requiredSides };
   if (matchSide) required[matchSide] = matchValue || 1;
-  const template = puzzleChooseShapeTemplate(id, required);
+  const template = puzzleChooseShapeTemplate(id, required, randomSeed);
   if (!template) return null;
   return { id, x: 0, y: 0, angle: 0, born: id, templateId: template.id, sides: { ...template.sides } };
 }
 
-function puzzleChooseShapeTemplate(id, requiredSides = {}) {
-  return puzzleMatchingTemplates(id, requiredSides)[0] || null;
+function puzzleChooseShapeTemplate(id, requiredSides = {}, randomSeed = "") {
+  return puzzleMatchingTemplates(id, requiredSides, randomSeed)[0] || null;
 }
 
-function puzzleMatchingTemplates(id, requiredSides = {}) {
+function puzzleRandomUnit() {
+  const cryptoObject = window.crypto || window.msCrypto;
+  if (cryptoObject?.getRandomValues) {
+    const values = new Uint32Array(1);
+    cryptoObject.getRandomValues(values);
+    return values[0] / 0x100000000;
+  }
+  return Math.random();
+}
+
+function puzzleCreateRandomSeed(label = "") {
+  return `${Date.now()}|${Math.floor(puzzleRandomUnit() * 0x100000000)}|${label}`;
+}
+
+function puzzleMatchingTemplates(id, requiredSides = {}, randomSeed = "") {
   const entries = Object.entries(requiredSides).filter(([, value]) => value != null);
   const matches = puzzleShapeTemplates.filter((template) => entries.every(([side, value]) => template.sides[side] === value));
   if (!matches.length) return [];
-  const random = seededRandom(`puzzle-template|${id}|${entries.map(([side, value]) => `${side}:${value}`).join("|")}`);
+  const random = seededRandom(`puzzle-template|${randomSeed}|${id}|${entries.map(([side, value]) => `${side}:${value}`).join("|")}`);
   return matches
     .map((template) => ({ template, sort: random() }))
     .sort((a, b) => a.sort - b.sort)
@@ -105,17 +142,35 @@ function puzzleMatchingTemplates(id, requiredSides = {}) {
 }
 
 function puzzleEnsureCycle(cycle) {
-  const system = state.puzzleSystem || (state.puzzleSystem = { cache: [puzzleInitialState()] });
+  if (!state.puzzleSystem) {
+    const seed = puzzleCreateRandomSeed("live");
+    state.puzzleSystem = { seed, cache: [puzzleInitialState(`${seed}|initial`)], transitions: [] };
+  }
+  const system = state.puzzleSystem;
+  if (!system.seed) system.seed = puzzleCreateRandomSeed("live");
+  if (!system.transitions) system.transitions = [];
+  if (!system.cache?.length) system.cache = [puzzleInitialState(`${system.seed}|initial`)];
+  for (let index = 0; index <= cycle; index += 1) {
+    if (!system.transitions[index]) {
+      const previous = system.cache[index];
+      const transition = puzzleNextState(previous, index, `${system.seed}|cycle:${index}`);
+      system.transitions[index] = transition;
+      system.cache[index + 1] = transition.after;
+    }
+  }
   while (system.cache.length <= cycle + 1) {
     const previous = system.cache[system.cache.length - 1];
-    system.cache.push(puzzleNextState(previous, system.cache.length - 1).after);
+    const index = system.cache.length - 1;
+    const transition = puzzleNextState(previous, index, `${system.seed}|cycle:${index}`);
+    system.transitions[index] = transition;
+    system.cache.push(transition.after);
   }
 }
 
-function puzzleNextState(previous, cycle) {
+function puzzleNextState(previous, cycle, randomSeed = "") {
   const beforePieces = previous.pieces.map(puzzleClonePiece);
   const active = beforePieces.find((piece) => piece.id === previous.activeId) || beforePieces[beforePieces.length - 1];
-  const insertion = puzzleChooseInsertion(active, beforePieces, previous.nextId, cycle);
+  const insertion = puzzleChooseInsertion(active, beforePieces, previous.nextId, cycle, randomSeed);
   const directionName = insertion.directionName;
   const direction = puzzleDirections[directionName];
   const targetAngle = -direction.angle;
@@ -148,7 +203,7 @@ function puzzleChooseDirection(active, pieces, cycle) {
   return puzzleChooseInsertion(active, pieces, Number(active.id || 1) + cycle + 1, cycle).directionName;
 }
 
-function puzzleChooseInsertion(active, pieces, nextId, cycle) {
+function puzzleChooseInsertion(active, pieces, nextId, cycle, randomSeed = "") {
   const occupied = new Set(pieces.filter((piece) => piece.id !== active.id).map((piece) => `${Math.round(piece.x - active.x)},${Math.round(piece.y - active.y)}`));
   const choices = ["right", "top", "bottom"]
     .map((directionName) => ({
@@ -159,18 +214,18 @@ function puzzleChooseInsertion(active, pieces, nextId, cycle) {
   for (const choice of choices) {
     const dir = puzzleDirections[choice.directionName];
     if (occupied.has(`${dir.x},${dir.y}`)) continue;
-    const newPiece = puzzleBuildMatchingPiece(nextId, active, pieces, choice.directionName);
+    const newPiece = puzzleBuildMatchingPiece(nextId, active, pieces, choice.directionName, `${randomSeed}|${choice.directionName}`);
     if (newPiece && puzzleValidateContacts([...pieces, newPiece])) return { directionName: choice.directionName, newPiece };
   }
-  return { directionName: "right", newPiece: puzzleBuildMatchingPiece(nextId, active, [active], "right") };
+  return { directionName: "right", newPiece: puzzleBuildMatchingPiece(nextId, active, [active], "right", `${randomSeed}|right`) };
 }
 
-function puzzleBuildMatchingPiece(id, active, pieces, directionName) {
+function puzzleBuildMatchingPiece(id, active, pieces, directionName, randomSeed = "") {
   const direction = puzzleDirections[directionName];
   const probe = { id, x: active.x + direction.x, y: active.y + direction.y, angle: active.angle, sides: {} };
   const requiredSides = puzzleRequiredSidesForProbe(probe, pieces);
   if (!requiredSides) return null;
-  const candidates = puzzleMatchingTemplates(id, requiredSides).map((template) => ({
+  const candidates = puzzleMatchingTemplates(id, requiredSides, randomSeed).map((template) => ({
     id,
     x: probe.x,
     y: probe.y,
@@ -180,7 +235,7 @@ function puzzleBuildMatchingPiece(id, active, pieces, directionName) {
     sides: { ...template.sides },
   }));
   const validCandidates = candidates.filter((piece) => puzzleValidateContacts([...pieces, piece]));
-  return validCandidates.find((piece) => puzzleHasFutureInsertion(piece, pieces, directionName, id + 1)) || validCandidates[0] || null;
+  return validCandidates.find((piece) => puzzleHasFutureInsertion(piece, pieces, directionName, id + 1, `${randomSeed}|future`)) || validCandidates[0] || null;
 }
 
 function puzzleRequiredSidesForProbe(probe, pieces) {
@@ -207,11 +262,11 @@ function puzzleRequiredSidesForProbe(probe, pieces) {
   return requiredSides;
 }
 
-function puzzleHasFutureInsertion(newPiece, pieces, directionName, nextId) {
+function puzzleHasFutureInsertion(newPiece, pieces, directionName, nextId, randomSeed = "") {
   const afterPieces = puzzleProjectedAfterPieces(pieces, newPiece, directionName);
   const active = afterPieces.find((piece) => piece.id === newPiece.id);
   if (!active) return false;
-  return ["right", "top", "bottom"].some((futureDirectionName) => puzzleCanInsertFrom(active, afterPieces, futureDirectionName, nextId));
+  return ["right", "top", "bottom"].some((futureDirectionName) => puzzleCanInsertFrom(active, afterPieces, futureDirectionName, nextId, `${randomSeed}|${futureDirectionName}`));
 }
 
 function puzzleProjectedAfterPieces(pieces, newPiece, directionName) {
@@ -232,7 +287,7 @@ function puzzleProjectedAfterPieces(pieces, newPiece, directionName) {
   return oldest ? transformed.filter((piece) => piece.id !== oldest.id) : transformed;
 }
 
-function puzzleCanInsertFrom(active, pieces, directionName, nextId) {
+function puzzleCanInsertFrom(active, pieces, directionName, nextId, randomSeed = "") {
   const direction = puzzleDirections[directionName];
   const localSide = puzzleLocalSideForWorld(active, directionName);
   if (!active.sides[localSide]) return false;
@@ -240,7 +295,7 @@ function puzzleCanInsertFrom(active, pieces, directionName, nextId) {
   if (occupied.has(`${direction.x},${direction.y}`)) return false;
   const probe = { id: nextId, x: active.x + direction.x, y: active.y + direction.y, angle: active.angle, sides: {} };
   const requiredSides = puzzleRequiredSidesForProbe(probe, pieces);
-  return !!requiredSides && puzzleMatchingTemplates(nextId, requiredSides).length > 0;
+  return !!requiredSides && puzzleMatchingTemplates(nextId, requiredSides, randomSeed).length > 0;
 }
 
 function puzzleValidateContacts(pieces) {
@@ -293,8 +348,7 @@ function renderPuzzleEffect(now) {
   const raw = clamp(local / duration, 0, 1);
   puzzleEnsureCycle(cycle);
   const system = state.puzzleSystem;
-  const previous = system.cache[cycle];
-  const transition = puzzleNextState(previous, cycle);
+  const transition = system.transitions[cycle];
   if (local > duration) {
     const settled = system.cache[cycle + 1].pieces.map((piece) => ({ ...piece, alpha: 1, fillAlpha: 0 }));
     system.lastFrame = settled;
@@ -332,7 +386,7 @@ function puzzleDrawPieces(ctx, pieces) {
   const viewport = state.particleSystem.viewport;
   const size = 17.5;
   const spacing = size;
-  const visibleStrokeWidth = Math.max(0.03, Number(config.puzzleStrokeWidth) || 0.16) * (viewport.size / 100);
+  const visibleStrokeWidth = puzzleStrokeWidthLocalUnits(viewport);
   const skipSides = puzzleSharedSidesToSkip(pieces);
   ctx.save();
   ctx.fillStyle = config.puzzleStrokeColor;
@@ -352,27 +406,29 @@ function puzzleDrawPieces(ctx, pieces) {
     ctx.fill();
     ctx.restore();
   });
-  ctx.lineWidth = visibleStrokeWidth * 2;
-  ctx.strokeStyle = config.puzzleStrokeColor;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  pieces.forEach((piece) => {
-    const center = {
-      x: viewport.x + (50 + piece.x * spacing) / 100 * viewport.size,
-      y: viewport.y + (50 + piece.y * spacing) / 100 * viewport.size,
-    };
-    ctx.save();
-    ctx.translate(center.x, center.y);
-    ctx.rotate(piece.angle || 0);
-    ctx.scale(viewport.size / 100, viewport.size / 100);
-    ctx.globalAlpha = clamp(Number(config.puzzleStrokeOpacity) || 1, 0, 1) * clamp(piece.alpha ?? 1, 0, 1);
-    puzzleTracePiece(ctx, size, piece.sides);
-    ctx.save();
-    ctx.clip();
-    puzzleTracePieceStroke(ctx, size, piece.sides, skipSides.get(piece.id));
-    ctx.restore();
-    ctx.restore();
-  });
+  if (visibleStrokeWidth > 0) {
+    ctx.lineWidth = visibleStrokeWidth;
+    ctx.strokeStyle = config.puzzleStrokeColor;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    pieces.forEach((piece) => {
+      const center = {
+        x: viewport.x + (50 + piece.x * spacing) / 100 * viewport.size,
+        y: viewport.y + (50 + piece.y * spacing) / 100 * viewport.size,
+      };
+      ctx.save();
+      ctx.translate(center.x, center.y);
+      ctx.rotate(piece.angle || 0);
+      ctx.scale(viewport.size / 100, viewport.size / 100);
+      ctx.globalAlpha = clamp(Number(config.puzzleStrokeOpacity) || 1, 0, 1) * clamp(piece.alpha ?? 1, 0, 1);
+      puzzleTracePiece(ctx, size, piece.sides);
+      ctx.save();
+      ctx.clip();
+      puzzleTracePieceStroke(ctx, size, piece.sides, skipSides.get(piece.id));
+      ctx.restore();
+      ctx.restore();
+    });
+  }
   ctx.restore();
   ctx.globalAlpha = 1;
 }
@@ -538,6 +594,7 @@ function puzzlePiecePolyline(piece, size = 17.5) {
 }
 
 function generatePuzzleStandaloneHTML() {
+  puzzleNormalizeStrokeWidthDp();
   const standaloneConfig = {
     puzzleMotionDurationMs: config.puzzleMotionDurationMs,
     puzzleMotionIntervalMs: config.puzzleMotionIntervalMs,
@@ -568,7 +625,8 @@ const puzzleOppositeSide = ${JSON.stringify(puzzleOppositeSide)};
 const puzzleShapeTemplates = ${JSON.stringify(puzzleShapeTemplates)};
 let viewport = { x: 0, y: 0, size: 1 };
 let startedAt = performance.now();
-const system = { cache: [puzzleInitialState()] };
+const system = { seed: puzzleCreateRandomSeed("standalone"), cache: [], transitions: [] };
+system.cache = [puzzleInitialState(system.seed + "|initial")];
 function seededRandom(seed) {
   let h = 2166136261 >>> 0;
   const text = String(seed);
@@ -624,8 +682,7 @@ function draw(now) {
     requestAnimationFrame(draw);
     return;
   }
-  const previous = system.cache[cycle];
-  const transition = puzzleNextState(previous, cycle);
+  const transition = system.transitions[cycle];
   const rotateProgress = easedSegment(0, 0.46, raw);
   const moveProgress = easedSegment(0.3, 0.78, raw);
   const fadeIn = easedSegment(0, 0.3, raw);
@@ -656,39 +713,63 @@ requestAnimationFrame(draw);
 function puzzleStandaloneCoreSource() {
   return `
 function puzzleInitialState() {
-  const first = puzzleCreatePiece(1, "right", 1);
+  const first = puzzleCreatePiece(1, "right", 1, null, system.seed + "|initial");
   first.x = 0; first.y = 0; first.angle = 0;
   return { pieces: [first], activeId: first.id, nextId: 2 };
 }
-function puzzleCreatePiece(id, matchSide, matchValue, requiredSides) {
+function puzzleCreatePiece(id, matchSide, matchValue, requiredSides, randomSeed) {
   const required = { ...(requiredSides || {}) };
   if (matchSide) required[matchSide] = matchValue || 1;
-  const template = puzzleChooseShapeTemplate(id, required);
+  const template = puzzleChooseShapeTemplate(id, required, randomSeed || "");
   if (!template) return null;
   return { id, x: 0, y: 0, angle: 0, born: id, templateId: template.id, sides: { ...template.sides } };
 }
-function puzzleChooseShapeTemplate(id, requiredSides) {
-  return puzzleMatchingTemplates(id, requiredSides)[0] || null;
+function puzzleChooseShapeTemplate(id, requiredSides, randomSeed) {
+  return puzzleMatchingTemplates(id, requiredSides, randomSeed || "")[0] || null;
 }
-function puzzleMatchingTemplates(id, requiredSides) {
+function puzzleRandomUnit() {
+  const cryptoObject = window.crypto || window.msCrypto;
+  if (cryptoObject && cryptoObject.getRandomValues) {
+    const values = new Uint32Array(1);
+    cryptoObject.getRandomValues(values);
+    return values[0] / 0x100000000;
+  }
+  return Math.random();
+}
+function puzzleCreateRandomSeed(label) {
+  return Date.now() + "|" + Math.floor(puzzleRandomUnit() * 0x100000000) + "|" + (label || "");
+}
+function puzzleMatchingTemplates(id, requiredSides, randomSeed) {
   const entries = Object.entries(requiredSides || {}).filter(([, value]) => value != null);
   const matches = puzzleShapeTemplates.filter((template) => entries.every(([side, value]) => template.sides[side] === value));
   if (!matches.length) return [];
   const key = entries.map(([side, value]) => side + ":" + value).join("|");
-  const random = seededRandom("puzzle-template|" + id + "|" + key);
+  const random = seededRandom("puzzle-template|" + (randomSeed || "") + "|" + id + "|" + key);
   return matches.map((template) => ({ template, sort: random() })).sort((a, b) => a.sort - b.sort).map(({ template }) => template);
 }
 function puzzleClonePiece(piece) { return { ...piece, sides: { ...piece.sides } }; }
 function puzzleEnsureCycle(cycle) {
+  if (!system.transitions) system.transitions = [];
+  if (!system.cache.length) system.cache = [puzzleInitialState(system.seed + "|initial")];
+  for (let index = 0; index <= cycle; index += 1) {
+    if (!system.transitions[index]) {
+      const transition = puzzleNextState(system.cache[index], index, system.seed + "|cycle:" + index);
+      system.transitions[index] = transition;
+      system.cache[index + 1] = transition.after;
+    }
+  }
   while (system.cache.length <= cycle + 1) {
     const previous = system.cache[system.cache.length - 1];
-    system.cache.push(puzzleNextState(previous, system.cache.length - 1).after);
+    const index = system.cache.length - 1;
+    const transition = puzzleNextState(previous, index, system.seed + "|cycle:" + index);
+    system.transitions[index] = transition;
+    system.cache.push(transition.after);
   }
 }
-function puzzleNextState(previous, cycle) {
+function puzzleNextState(previous, cycle, randomSeed) {
   const before = previous.pieces.map(puzzleClonePiece);
   const active = before.find((piece) => piece.id === previous.activeId) || before[before.length - 1];
-  const insertion = puzzleChooseInsertion(active, before, previous.nextId, cycle);
+  const insertion = puzzleChooseInsertion(active, before, previous.nextId, cycle, randomSeed || "");
   const directionName = insertion.directionName;
   const direction = puzzleDirections[directionName];
   const targetAngle = -direction.angle;
@@ -705,25 +786,25 @@ function puzzleNextState(previous, cycle) {
 function puzzleChooseDirection(active, pieces, cycle) {
   return puzzleChooseInsertion(active, pieces, Number(active.id || 1) + cycle + 1, cycle).directionName;
 }
-function puzzleChooseInsertion(active, pieces, nextId, cycle) {
+function puzzleChooseInsertion(active, pieces, nextId, cycle, randomSeed) {
   const occupied = new Set(pieces.filter((piece) => piece.id !== active.id).map((piece) => Math.round(piece.x - active.x) + "," + Math.round(piece.y - active.y)));
   const choices = ["right", "top", "bottom"].map((directionName) => ({ directionName, sort: seededRandom("puzzle-direction|" + cycle + "|" + active.id + "|" + directionName)() })).sort((a, b) => a.sort - b.sort);
   for (const choice of choices) {
     const dir = puzzleDirections[choice.directionName];
     if (occupied.has(dir.x + "," + dir.y)) continue;
-    const newPiece = puzzleBuildMatchingPiece(nextId, active, pieces, choice.directionName);
+    const newPiece = puzzleBuildMatchingPiece(nextId, active, pieces, choice.directionName, (randomSeed || "") + "|" + choice.directionName);
     if (newPiece && puzzleValidateContacts([...pieces, newPiece])) return { directionName: choice.directionName, newPiece };
   }
-  return { directionName: "right", newPiece: puzzleBuildMatchingPiece(nextId, active, [active], "right") };
+  return { directionName: "right", newPiece: puzzleBuildMatchingPiece(nextId, active, [active], "right", (randomSeed || "") + "|right") };
 }
-function puzzleBuildMatchingPiece(id, active, pieces, directionName) {
+function puzzleBuildMatchingPiece(id, active, pieces, directionName, randomSeed) {
   const direction = puzzleDirections[directionName];
   const probe = { id, x: active.x + direction.x, y: active.y + direction.y, angle: active.angle, sides: {} };
   const requiredSides = puzzleRequiredSidesForProbe(probe, pieces);
   if (!requiredSides) return null;
-  const candidates = puzzleMatchingTemplates(id, requiredSides).map((template) => ({ id, x: probe.x, y: probe.y, angle: probe.angle, born: id, templateId: template.id, sides: { ...template.sides } }));
+  const candidates = puzzleMatchingTemplates(id, requiredSides, randomSeed || "").map((template) => ({ id, x: probe.x, y: probe.y, angle: probe.angle, born: id, templateId: template.id, sides: { ...template.sides } }));
   const validCandidates = candidates.filter((piece) => puzzleValidateContacts([...pieces, piece]));
-  return validCandidates.find((piece) => puzzleHasFutureInsertion(piece, pieces, directionName, id + 1)) || validCandidates[0] || null;
+  return validCandidates.find((piece) => puzzleHasFutureInsertion(piece, pieces, directionName, id + 1, (randomSeed || "") + "|future")) || validCandidates[0] || null;
 }
 function puzzleRequiredSidesForProbe(probe, pieces) {
   const requiredSides = {};
@@ -740,11 +821,11 @@ function puzzleRequiredSidesForProbe(probe, pieces) {
   }
   return requiredSides;
 }
-function puzzleHasFutureInsertion(newPiece, pieces, directionName, nextId) {
+function puzzleHasFutureInsertion(newPiece, pieces, directionName, nextId, randomSeed) {
   const afterPieces = puzzleProjectedAfterPieces(pieces, newPiece, directionName);
   const active = afterPieces.find((piece) => piece.id === newPiece.id);
   if (!active) return false;
-  return ["right", "top", "bottom"].some((futureDirectionName) => puzzleCanInsertFrom(active, afterPieces, futureDirectionName, nextId));
+  return ["right", "top", "bottom"].some((futureDirectionName) => puzzleCanInsertFrom(active, afterPieces, futureDirectionName, nextId, (randomSeed || "") + "|" + futureDirectionName));
 }
 function puzzleProjectedAfterPieces(pieces, newPiece, directionName) {
   const direction = puzzleDirections[directionName];
@@ -758,7 +839,7 @@ function puzzleProjectedAfterPieces(pieces, newPiece, directionName) {
   const oldest = combined.length > 3 ? combined.reduce((best, piece) => piece.id < best.id ? piece : best, combined[0]) : null;
   return oldest ? transformed.filter((piece) => piece.id !== oldest.id) : transformed;
 }
-function puzzleCanInsertFrom(active, pieces, directionName, nextId) {
+function puzzleCanInsertFrom(active, pieces, directionName, nextId, randomSeed) {
   const direction = puzzleDirections[directionName];
   const localSide = puzzleLocalSideForWorld(active, directionName);
   if (!active.sides[localSide]) return false;
@@ -766,7 +847,7 @@ function puzzleCanInsertFrom(active, pieces, directionName, nextId) {
   if (occupied.has(direction.x + "," + direction.y)) return false;
   const probe = { id: nextId, x: active.x + direction.x, y: active.y + direction.y, angle: active.angle, sides: {} };
   const requiredSides = puzzleRequiredSidesForProbe(probe, pieces);
-  return !!requiredSides && puzzleMatchingTemplates(nextId, requiredSides).length > 0;
+  return !!requiredSides && puzzleMatchingTemplates(nextId, requiredSides, randomSeed || "").length > 0;
 }
 function puzzleValidateContacts(pieces) {
   for (let i = 0; i < pieces.length; i += 1) {
@@ -803,9 +884,14 @@ function puzzleNormalizeAngle(angle) {
   const tau = Math.PI * 2;
   return ((angle % tau) + tau) % tau;
 }
+function puzzleStrokeWidthDp() {
+  const width = Number(config.puzzleStrokeWidth);
+  if (!Number.isFinite(width)) return 2;
+  return clamp(width, 0, 8);
+}
 function puzzleDrawPieces(pieces) {
   const size = 17.5, spacing = size;
-  const visibleStrokeWidth = Math.max(0.03, config.puzzleStrokeWidth || 0.16) * (viewport.size / 100);
+  const visibleStrokeWidth = puzzleStrokeWidthDp() * (window.devicePixelRatio || 1) / Math.max(0.0001, viewport.size / 100);
   const skipSides = puzzleSharedSidesToSkip(pieces);
   ctx.save();
   ctx.fillStyle = config.puzzleStrokeColor;
@@ -822,24 +908,26 @@ function puzzleDrawPieces(pieces) {
     ctx.fill();
     ctx.restore();
   });
-  ctx.lineWidth = visibleStrokeWidth * 2;
-  ctx.strokeStyle = config.puzzleStrokeColor;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  pieces.forEach((piece) => {
-    const center = { x: viewport.x + (50 + piece.x * spacing) / 100 * viewport.size, y: viewport.y + (50 + piece.y * spacing) / 100 * viewport.size };
-    ctx.save();
-    ctx.translate(center.x, center.y);
-    ctx.rotate(piece.angle || 0);
-    ctx.scale(viewport.size / 100, viewport.size / 100);
-    ctx.globalAlpha = clamp(config.puzzleStrokeOpacity == null ? 1 : config.puzzleStrokeOpacity, 0, 1) * clamp(piece.alpha == null ? 1 : piece.alpha, 0, 1);
-    puzzleTracePiece(size, piece.sides);
-    ctx.save();
-    ctx.clip();
-    puzzleTracePieceStroke(size, piece.sides, skipSides.get(piece.id));
-    ctx.restore();
-    ctx.restore();
-  });
+  if (visibleStrokeWidth > 0) {
+    ctx.lineWidth = visibleStrokeWidth;
+    ctx.strokeStyle = config.puzzleStrokeColor;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    pieces.forEach((piece) => {
+      const center = { x: viewport.x + (50 + piece.x * spacing) / 100 * viewport.size, y: viewport.y + (50 + piece.y * spacing) / 100 * viewport.size };
+      ctx.save();
+      ctx.translate(center.x, center.y);
+      ctx.rotate(piece.angle || 0);
+      ctx.scale(viewport.size / 100, viewport.size / 100);
+      ctx.globalAlpha = clamp(config.puzzleStrokeOpacity == null ? 1 : config.puzzleStrokeOpacity, 0, 1) * clamp(piece.alpha == null ? 1 : piece.alpha, 0, 1);
+      puzzleTracePiece(size, piece.sides);
+      ctx.save();
+      ctx.clip();
+      puzzleTracePieceStroke(size, piece.sides, skipSides.get(piece.id));
+      ctx.restore();
+      ctx.restore();
+    });
+  }
   ctx.restore();
   ctx.globalAlpha = 1;
 }
@@ -936,7 +1024,7 @@ function generatePuzzleLottie() {
     {
       index: index + 1,
       stroke: config.puzzleStrokeColor,
-      strokeWidth: Math.max(0.03, Number(config.puzzleStrokeWidth) || 0.16),
+      strokeWidth: puzzleStrokeWidthDp(),
       opacity: config.puzzleStrokeOpacity,
     },
   ));

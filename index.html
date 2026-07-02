@@ -263,14 +263,6 @@
       border-bottom: 0;
     }
 
-    .effect-description {
-      margin: -2px 0 0;
-      padding: 0 12px 14px;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.55;
-    }
-
     .control-card-head {
       display: flex;
       align-items: center;
@@ -1311,7 +1303,6 @@
               <option value="neural">神经网络</option>
             </select>
           </div>
-          <p id="effect-description" class="effect-description"></p>
         </div>
 
         <div id="image-card" class="control-card">
@@ -1409,7 +1400,7 @@
   <script src="effects/particle.js"></script>
   <script src="effects/cell.js"></script>
   <script src="effects/puzzle.js"></script>
-  <script src="effects/morph.js?v=20260701-region-label-pairing"></script>
+  <script src="effects/morph.js?v=20260702-stroke-alpha"></script>
   <script src="effects/neural.js"></script>
 
   <script>
@@ -1421,7 +1412,6 @@
     const themeToggle = document.querySelector("#theme-toggle");
     const modeTabs = document.querySelector("#mode-tabs");
     const effectSelect = document.querySelector("#effect-select");
-    const effectDescription = document.querySelector("#effect-description");
     const imageCard = document.querySelector("#image-card");
     const referenceCardTitle = document.querySelector("#reference-card-title");
     const resetMotion = document.querySelector("#reset-motion");
@@ -1592,22 +1582,6 @@
         generateLottie: generateNeuralLottie,
       },
     };
-
-    const effectDescriptions = {
-      flow: "将参考轮廓视为复平面上的闭合参数曲线，用傅立叶描述子分解为一组频率项，再重建为可连续采样的路径；粒子沿这条重建曲线分布和推进，形成流动感。",
-      line: "把字符或轮廓点抽象为图中的节点，通过连通路径与生成树思路选择边，将多个点组织成连续关系，再用路径动画表现连接过程。",
-      sine: "用多个正弦波的频率、相位、振幅叠加，得到随时间变化的复合波形；相位推进让形状产生连续流动。",
-      oscilloscope: "基于李萨如图形：用互相垂直方向的简谐振动参数方程控制轨迹，频率比、相位差和振幅共同决定示波器式曲线。",
-      particle: "基于粒子系统和吸引子模型，将图像或关键帧转为目标点/目标状态；粒子在吸引、阻尼、随机扰动和鼠标外力之间运动并重组。",
-      morph: "通过形状采样、点集匹配与插值，把两组轮廓或图像粒子建立对应关系，再按缓动函数在源状态和目标状态之间连续过渡。",
-      cell: "借鉴 Voronoi/Dirichlet 分区思想，用多个种子点划分局部空间，再以圆形细胞单元填充轮廓；换位、闪烁、生长和旋转都围绕这些种子结构展开。",
-      puzzle: "用带插口的线框拼图块构成小型序列；新块从当前中心块的上、下或右侧插入，画面旋转使新块来到右侧，再整体平移让它成为新的中心。",
-      neural: "以固定点阵作为网络节点，光标在节点场中游走或跟随鼠标；根据距离筛选附近节点并生成放射状连接，节点亮度和尺寸随连接强度变化。",
-    };
-
-    function updateEffectDescription() {
-      if (effectDescription) effectDescription.textContent = effectDescriptions[config.effectType] || "";
-    }
 
     const config = {
       effectType: "flow",
@@ -1796,12 +1770,13 @@
       if (key.startsWith("puzzle")) {
         if (key === "puzzleStrokeColor") return colorToRgbaText(value, config.puzzleStrokeOpacity);
         if (key === "puzzleStrokeOpacity") return `${Math.round(Number(value) * 100)}%`;
-        if (key === "puzzleStrokeWidth") return `${Number(value).toFixed(2)}x`;
+        if (key === "puzzleStrokeWidth") return `${Number(value).toFixed(1)}dp`;
         return key.endsWith("Ms") ? `${(value / 1000).toFixed(1)}s` : Number(value).toFixed(2);
       }
       if (key.startsWith("neural")) {
         if (key === "neuralSource") {
           if (value === "reference") return "参考图";
+          if (value === "perspective") return "透视";
           return value === "square" ? "方形" : "圆形";
         }
         if (key === "neuralNodeShape") {
@@ -1816,6 +1791,7 @@
         if (key === "neuralLineColor") return colorToRgbaText(value, config.neuralLineOpacity);
         if (key === "neuralDensity") {
           const count = clamp(Math.round(Number(value) || 13), 4, 20);
+          if (config.neuralSource === "perspective") return `${count}x${count}x${count}`;
           return `${count}x${count}`;
         }
         if (key === "neuralNodeSize" || key === "neuralCursorSize" || key === "neuralLineWidth" || key === "neuralCursorSpeed") return `${Number(value).toFixed(2)}x`;
@@ -3903,8 +3879,8 @@
       if (config.effectType === "neural") {
         return [
           "Neural network field",
-          "nodes = fixed lattice clipped by circle / square / reference mask",
-          "cursor(t) = mouse position when follow is on, otherwise damped Brownian motion",
+          config.neuralSource === "perspective" ? "nodes = rotating isometric 3D lattice" : "nodes = fixed lattice clipped by circle / square / reference mask",
+          config.neuralSource === "perspective" ? "cursor(t) = damped Brownian motion in x/y/z space" : "cursor(t) = mouse position when follow is on, otherwise damped Brownian motion",
           "links(t) = nearest nodes inside cursor radius, opacity = distance falloff",
           "node size and brightness increase with link influence",
           "",
@@ -4614,7 +4590,6 @@
     function renderMotionControls() {
       const effect = activeEffect();
       effectSelect.value = config.effectType;
-      updateEffectDescription();
       const hasReferenceFrames = Boolean(effect.hasParticleKeyframes);
       imageCard.classList.toggle("is-hidden", Boolean(effect.hideImageOptions) && !hasReferenceFrames);
       dropzone.classList.toggle("is-hidden", Boolean(effect.hideImageOptions) || hasReferenceFrames);

@@ -1144,6 +1144,11 @@ function drawMorphProgressiveCircle(ctx, circle, color, alpha, progress, lineWid
   ctx.restore();
 }
 
+function morphColorSelfAlpha(color) {
+  const parts = typeof parseColorValue === "function" ? parseColorValue(color) : null;
+  return clamp(Number(parts?.a ?? 1), 0, 1);
+}
+
 function drawMorphStrokeShape(ctx, shape) {
   if (!shape.points.length) return;
   const viewport = state.particleSystem.viewport;
@@ -1156,35 +1161,46 @@ function drawMorphStrokeShape(ctx, shape) {
   const guidePoints = shape.strokeGuidePoints?.length ? shape.strokeGuidePoints : visualPoints;
   const canvasVisualPoints = visualPoints.map((point) => ({ ...morphCanvasPoint(point), sourceIndex: point.sourceIndex, slotIndex: point.slotIndex }));
   const guideItems = morphStrokeGuideItems(guidePoints, shape.strokeSeed || "morph-stroke");
+  const guideColor = config.morphStrokeGuideColor || config.morphStrokeLineColor;
+  const guideAlpha = alpha * 0.62 * morphColorSelfAlpha(guideColor);
+  const lineAlpha = alpha * morphColorSelfAlpha(config.morphStrokeLineColor);
+  const pointAlpha = alpha * morphColorSelfAlpha(config.morphStrokePointColor);
   ctx.save();
-  ctx.globalAlpha = alpha;
+  ctx.globalAlpha = 1;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-  ctx.shadowColor = config.morphStrokeLineColor;
-  ctx.shadowBlur = viewport.size * 0.004 * clamp(config.morphBreath, 0, 1);
-  guideItems.forEach(({ point, axis, lengthX, lengthY }) => {
-    const anchor = morphCanvasPoint(point);
-    const guideWidth = Math.max(0.5, lineWidth * 0.42);
-    if (axis === "x" || axis === "both") {
-      drawMorphFadingGuideLine(ctx, anchor, { x: 1, y: 0 }, particleCanvas.width, particleCanvas.height, config.morphStrokeGuideColor, alpha * 0.54, guideProgress, guideWidth, lengthX);
-    }
-    if (axis === "y" || axis === "both") {
-      drawMorphFadingGuideLine(ctx, anchor, { x: 0, y: 1 }, particleCanvas.width, particleCanvas.height, config.morphStrokeGuideColor, alpha * 0.54, guideProgress, guideWidth, lengthY);
-    }
-  });
-  drawMorphProgressiveCircle(ctx, morphNearestCirclePair(guidePoints, shape.strokeSeed || "morph-stroke"), config.morphStrokeGuideColor, alpha * 0.62, guideProgress, Math.max(0.5, lineWidth * 0.5));
-  ctx.strokeStyle = colorToRgbaText(config.morphStrokeLineColor, alpha);
-  ctx.lineWidth = lineWidth;
-  drawMorphProgressivePolyline(ctx, morphSampleSmoothCanvasPath(shape.points), pathProgress);
-  ctx.fillStyle = colorToRgbaText(config.morphStrokePointColor, alpha);
-  canvasVisualPoints.forEach((point) => {
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, pointRadius, 0, Math.PI * 2);
-    ctx.fill();
-  });
+  if (guideAlpha > 0.001) {
+    ctx.shadowColor = guideColor;
+    ctx.shadowBlur = viewport.size * 0.004 * clamp(config.morphBreath, 0, 1);
+    guideItems.forEach(({ point, axis, lengthX, lengthY }) => {
+      const anchor = morphCanvasPoint(point);
+      const guideWidth = Math.max(0.5, lineWidth * 0.42);
+      if (axis === "x" || axis === "both") {
+        drawMorphFadingGuideLine(ctx, anchor, { x: 1, y: 0 }, particleCanvas.width, particleCanvas.height, guideColor, guideAlpha, guideProgress, guideWidth, lengthX);
+      }
+      if (axis === "y" || axis === "both") {
+        drawMorphFadingGuideLine(ctx, anchor, { x: 0, y: 1 }, particleCanvas.width, particleCanvas.height, guideColor, guideAlpha, guideProgress, guideWidth, lengthY);
+      }
+    });
+    drawMorphProgressiveCircle(ctx, morphNearestCirclePair(guidePoints, shape.strokeSeed || "morph-stroke"), guideColor, guideAlpha, guideProgress, Math.max(0.5, lineWidth * 0.5));
+  }
+  if (lineAlpha > 0.001) {
+    ctx.shadowColor = config.morphStrokeLineColor;
+    ctx.shadowBlur = viewport.size * 0.004 * clamp(config.morphBreath, 0, 1);
+    ctx.strokeStyle = colorToRgbaText(config.morphStrokeLineColor, lineAlpha);
+    ctx.lineWidth = lineWidth;
+    drawMorphProgressivePolyline(ctx, morphSampleSmoothCanvasPath(shape.points), pathProgress);
+  }
+  if (pointAlpha > 0.001) {
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = colorToRgbaText(config.morphStrokePointColor, pointAlpha);
+    canvasVisualPoints.forEach((point) => {
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, pointRadius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
   ctx.restore();
-  ctx.globalAlpha = 1;
-  ctx.shadowBlur = 0;
 }
 
 function generateMorphStandaloneHTML() {
@@ -1679,6 +1695,9 @@ function colorToRgba(color, alpha) {
   const opacity = clamp(alpha == null ? parts.a : alpha, 0, 1);
   return "rgba(" + parts.r + ", " + parts.g + ", " + parts.b + ", " + Number(opacity.toFixed(3)) + ")";
 }
+function colorSelfAlpha(color) {
+  return clamp(Number(colorParts(color).a || 0), 0, 1);
+}
 function strokeDesiredPointCount(points) {
   const manual = Math.round(Number(config.morphStrokePointCount) || 0);
   if (manual > 0) return clamp(manual, 1, points.length);
@@ -1982,42 +2001,53 @@ function drawProgressiveCircle(circle, color, alpha, progress, lineWidth) {
 }
 function drawStrokeShape(shape) {
   if (!shape.points.length) return;
-  const alpha = clamp((shape.alpha || 1) * config.morphOpacity, 0, 1);
+  const alpha = clamp((shape.alpha == null ? 1 : shape.alpha) * config.morphOpacity, 0, 1);
   const lineWidth = Math.max(0.6, Number(config.morphStrokeLineWidth) || 1) * (window.devicePixelRatio || 1);
   const pointRadius = Math.max(0.45, Number(config.morphStrokePointSize) || 1) * (window.devicePixelRatio || 1) * 1.8;
   const pathProgress = clamp(shape.strokeProgress == null ? 1 : shape.strokeProgress, 0, 1);
   const guideProgress = clamp(shape.strokeGuideProgress == null ? pathProgress : shape.strokeGuideProgress, 0, 1);
   const visualPoints = shape.strokeVisualPoints && shape.strokeVisualPoints.length ? shape.strokeVisualPoints : strokeVisualPoints(shape.points);
   const guidePoints = shape.strokeGuidePoints && shape.strokeGuidePoints.length ? shape.strokeGuidePoints : visualPoints;
+  const guideColor = config.morphStrokeGuideColor || config.morphStrokeLineColor;
+  const guideAlpha = alpha * 0.62 * colorSelfAlpha(guideColor);
+  const lineAlpha = alpha * colorSelfAlpha(config.morphStrokeLineColor);
+  const pointAlpha = alpha * colorSelfAlpha(config.morphStrokePointColor);
   ctx.save();
-  ctx.globalAlpha = alpha;
+  ctx.globalAlpha = 1;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.shadowColor = config.morphStrokeLineColor;
-  ctx.shadowBlur = viewport.size * 0.004 * clamp(config.morphBreath, 0, 1);
-  strokeGuideItems(guidePoints, shape.strokeSeed || "morph-stroke").forEach(({ point, axis, lengthX, lengthY }) => {
-    const anchor = toCanvas(point);
-    const guideWidth = Math.max(0.5, lineWidth * 0.42);
-    if (axis === "x" || axis === "both") {
-      drawFadingGuideLine(anchor, { x: 1, y: 0 }, config.morphStrokeGuideColor, alpha * 0.54, guideProgress, guideWidth, lengthX);
-    }
-    if (axis === "y" || axis === "both") {
-      drawFadingGuideLine(anchor, { x: 0, y: 1 }, config.morphStrokeGuideColor, alpha * 0.54, guideProgress, guideWidth, lengthY);
-    }
-  });
-  drawProgressiveCircle(nearestCirclePair(guidePoints, shape.strokeSeed || "morph-stroke"), config.morphStrokeGuideColor, alpha * 0.62, guideProgress, Math.max(0.5, lineWidth * 0.5));
-  ctx.strokeStyle = colorToRgba(config.morphStrokeLineColor, alpha);
-  ctx.lineWidth = lineWidth;
-  drawProgressivePolyline(sampleSmoothCanvasPath(shape.points), pathProgress);
-  ctx.fillStyle = colorToRgba(config.morphStrokePointColor, alpha);
-  visualPoints.map(toCanvas).forEach((point) => {
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, pointRadius, 0, Math.PI * 2);
-    ctx.fill();
-  });
+  if (guideAlpha > 0.001) {
+    ctx.shadowColor = guideColor;
+    ctx.shadowBlur = viewport.size * 0.004 * clamp(config.morphBreath, 0, 1);
+    strokeGuideItems(guidePoints, shape.strokeSeed || "morph-stroke").forEach(({ point, axis, lengthX, lengthY }) => {
+      const anchor = toCanvas(point);
+      const guideWidth = Math.max(0.5, lineWidth * 0.42);
+      if (axis === "x" || axis === "both") {
+        drawFadingGuideLine(anchor, { x: 1, y: 0 }, guideColor, guideAlpha, guideProgress, guideWidth, lengthX);
+      }
+      if (axis === "y" || axis === "both") {
+        drawFadingGuideLine(anchor, { x: 0, y: 1 }, guideColor, guideAlpha, guideProgress, guideWidth, lengthY);
+      }
+    });
+    drawProgressiveCircle(nearestCirclePair(guidePoints, shape.strokeSeed || "morph-stroke"), guideColor, guideAlpha, guideProgress, Math.max(0.5, lineWidth * 0.5));
+  }
+  if (lineAlpha > 0.001) {
+    ctx.shadowColor = config.morphStrokeLineColor;
+    ctx.shadowBlur = viewport.size * 0.004 * clamp(config.morphBreath, 0, 1);
+    ctx.strokeStyle = colorToRgba(config.morphStrokeLineColor, lineAlpha);
+    ctx.lineWidth = lineWidth;
+    drawProgressivePolyline(sampleSmoothCanvasPath(shape.points), pathProgress);
+  }
+  if (pointAlpha > 0.001) {
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = colorToRgba(config.morphStrokePointColor, pointAlpha);
+    visualPoints.map(toCanvas).forEach((point) => {
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, pointRadius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
   ctx.restore();
-  ctx.globalAlpha = 1;
-  ctx.shadowBlur = 0;
 }
 function drawShape(shape) {
   if (config.morphMotionMode === "morph" && config.morphRenderMode === "stroke") {
@@ -2030,7 +2060,7 @@ function drawFilledShape(shape) {
   if (!shape.points.length) return;
   const first = toCanvas(shape.points[0]);
   ctx.save();
-  ctx.globalAlpha = clamp((shape.alpha || 1) * config.morphOpacity, 0, 1);
+  ctx.globalAlpha = clamp((shape.alpha == null ? 1 : shape.alpha) * config.morphOpacity, 0, 1);
   ctx.fillStyle = config.morphColor;
   ctx.shadowColor = config.morphColor;
   ctx.shadowBlur = viewport.size * 0.012 * clamp(config.morphBreath, 0, 1);
