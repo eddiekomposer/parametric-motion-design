@@ -16,7 +16,17 @@ var morphDefaults = {
   morphStrokeGuideColor: "#f6f7f1",
   morphStrokePointSize: 1,
   morphStrokeLineWidth: 1,
+  morphStrokeMotionMode: "transition",
+  morphStrokeGuideDensity: 0.6,
+  morphStrokeDashRatio: 0.2,
+  morphStrokeDecoration: 0,
+  morphStrokeDecorationSize: 1,
+  morphStrokeCodeDecoration: true,
+  morphStrokeFrameDecoration: false,
 };
+
+var MORPH_STROKE_AUTO_POINT_COUNT = 18;
+var morphStrokeDecorationFrameState = { circleLabelDrawn: false };
 
 var morphControlDefs = [
   {
@@ -47,7 +57,24 @@ var morphControlDefs = [
     tip: "填充使用完整色块；描边使用轮廓线、端点和随端点运动绘制的正交辅助线。",
   },
   { key: "morphColor", alphaKey: "morphOpacity", type: "colorAlpha", label: "形状颜色", showWhen: () => config.morphMotionMode === "fusion" || config.morphRenderMode !== "stroke", tip: "控制变形形状的颜色和透明度。" },
+  {
+    key: "morphStrokeMotionMode",
+    type: "segmented",
+    label: "描边动效",
+    showWhen: () => config.morphMotionMode === "morph" && config.morphRenderMode === "stroke",
+    options: [
+      { value: "transition", label: "过渡" },
+      { value: "draw", label: "绘制" },
+    ],
+    tip: "过渡沿用当前 morph；绘制先淡出上一帧，再错峰绘制辅助线，随后描绘主体路径。",
+  },
   { key: "morphStrokePointCount", label: "端点数量", min: 0, max: 36, step: 1, showWhen: () => config.morphMotionMode === "morph" && config.morphRenderMode === "stroke", tip: "控制视觉端点数量。0 为自动，只取视觉拐角；手动数量不改变轮廓精度。" },
+  { key: "morphStrokeGuideDensity", label: "辅助线密度", min: 0, max: 1, step: 0.01, showWhen: () => config.morphMotionMode === "morph" && config.morphRenderMode === "stroke", tip: "控制端点中生成辅助线、辅助圆和相关装饰的比例。" },
+  { key: "morphStrokeDashRatio", label: "虚线比例", min: 0, max: 1, step: 0.01, showWhen: () => config.morphMotionMode === "morph" && config.morphRenderMode === "stroke", tip: "控制辅助线和辅助圆随机变为虚线的比例。" },
+  { key: "morphStrokeDecoration", label: "装饰", min: 0, max: 1, step: 0.01, showWhen: () => config.morphMotionMode === "morph" && config.morphRenderMode === "stroke", tip: "控制端点直角符号、端点编号、圆直径/半径标注和主体方形虚线 frame 的出现比例。" },
+  { key: "morphStrokeDecorationSize", label: "装饰尺寸", min: 0.45, max: 2.4, step: 0.05, showWhen: () => config.morphMotionMode === "morph" && config.morphRenderMode === "stroke", tip: "控制直径、半径和端点编号标注的视觉大小。" },
+  { key: "morphStrokeCodeDecoration", type: "toggle", label: "端点编号", showWhen: () => config.morphMotionMode === "morph" && config.morphRenderMode === "stroke", tip: "勾选后端点编号会按装饰百分比抽样出现。" },
+  { key: "morphStrokeFrameDecoration", type: "toggle", label: "虚线Frame", showWhen: () => config.morphMotionMode === "morph" && config.morphRenderMode === "stroke", tip: "勾选后主体周围虚线 frame 会按装饰百分比抽样出现。" },
   { key: "morphStrokeLineColor", type: "color", label: "连线颜色", showWhen: () => config.morphMotionMode === "morph" && config.morphRenderMode === "stroke", tip: "控制轮廓描边颜色。" },
   { key: "morphStrokeGuideColor", type: "color", label: "辅助线颜色", showWhen: () => config.morphMotionMode === "morph" && config.morphRenderMode === "stroke", tip: "控制端点处水平、垂直和切线圆辅助线颜色。" },
   { key: "morphStrokePointColor", type: "color", label: "端点颜色", showWhen: () => config.morphMotionMode === "morph" && config.morphRenderMode === "stroke", tip: "控制轮廓取样端点颜色。" },
@@ -455,6 +482,141 @@ function morphInterpolatedShape(a, b, index, mix, now) {
   };
 }
 
+function morphStrokeDrawTimeline(raw) {
+  const interval = Math.max(400, config.morphFrameIntervalMs);
+  const transition = Math.min(Math.max(120, config.morphTransitionMs), interval);
+  const fadeEnd = clamp(300 / transition, 0.08, 0.46);
+  const blankEnd = clamp(fadeEnd + clamp(130 / transition, 0.04, 0.18), fadeEnd, 0.72);
+  const bodyStart = clamp(blankEnd + (1 - blankEnd) * 0.6, blankEnd + 0.04, 0.92);
+  const p = clamp(raw, 0, 1);
+  return {
+    fadeAlpha: p <= 0 ? 1 : organicEase(clamp(1 - p / fadeEnd, 0, 1)),
+    guideProgress: organicEase(clamp((p - blankEnd) / Math.max(0.08, 1 - blankEnd), 0, 1)),
+    bodyProgress: organicEase(clamp((p - bodyStart) / Math.max(0.08, 1 - bodyStart), 0, 1)),
+  };
+}
+
+function morphStrokeStaticShape(shape, index, { alpha = 0.95, guideProgress = 1, pathProgress = 1, stagger = false } = {}) {
+  const points = shape.points || [];
+  const strokeVisualPoints = morphStrokeVisualPoints(points);
+  return {
+    ...shape,
+    points,
+    strokeVisualPoints,
+    strokeGuidePoints: strokeVisualPoints,
+    strokeProgress: pathProgress,
+    strokeGuideProgress: guideProgress,
+    strokeGuideStagger: stagger,
+    strokeSeed: morphShapeStrokeSeed(shape, index),
+    alpha,
+  };
+}
+
+function morphApplyStrokeVisualPointBudgets(shapes) {
+  const manual = Math.round(Number(config.morphStrokePointCount) || 0);
+  const desiredTotal = manual > 0 ? manual : MORPH_STROKE_AUTO_POINT_COUNT;
+  const active = shapes
+    .map((shape, index) => ({ shape, index, capacity: shape.points?.length || 0 }))
+    .filter(({ shape, capacity }) => capacity > 0 && (shape.alpha ?? 1) > 0.001);
+  const totalCapacity = active.reduce((sum, item) => sum + item.capacity, 0);
+  const target = clamp(desiredTotal, 0, totalCapacity);
+  shapes.forEach((shape) => {
+    shape.strokeVisualPoints = [];
+    shape.strokeGuidePoints = [];
+  });
+  if (target <= 0 || !active.length) return shapes;
+  const minPerShape = target >= active.length * 3 ? 3 : (target >= active.length ? 1 : 0);
+  let remaining = target;
+  active.forEach((item) => {
+    item.count = Math.min(item.capacity, minPerShape);
+    item.remainingCapacity = item.capacity - item.count;
+    remaining -= item.count;
+  });
+  if (remaining > 0) {
+    const totalRemainingCapacity = active.reduce((sum, item) => sum + item.remainingCapacity, 0);
+    const weighted = active.map((item) => {
+      const exact = totalRemainingCapacity <= 0 ? 0 : remaining * item.remainingCapacity / totalRemainingCapacity;
+      const extra = Math.min(item.remainingCapacity, Math.floor(exact));
+      return { ...item, extra, remainder: exact - extra };
+    });
+    let assigned = weighted.reduce((sum, item) => sum + item.extra, 0);
+    weighted
+      .sort((a, b) => b.remainder - a.remainder || a.index - b.index)
+      .forEach((item) => {
+        if (assigned < remaining && item.extra < item.remainingCapacity) {
+          item.extra += 1;
+          assigned += 1;
+        }
+      });
+    weighted.forEach((item) => {
+      item.shape.strokeVisualCount = clamp(item.count + item.extra, 0, item.capacity);
+    });
+  } else {
+    active.forEach((item) => {
+      item.shape.strokeVisualCount = clamp(item.count, 0, item.capacity);
+    });
+  }
+  active.forEach(({ shape }) => {
+    const count = Math.round(shape.strokeVisualCount || 0);
+    const points = count > 0 ? morphSampleStrokeVisualPoints(shape.points, count, manual > 0) : [];
+    shape.strokeVisualPoints = points;
+    shape.strokeGuidePoints = points;
+  });
+  return shapes;
+}
+
+function morphApplyStrokeGuideBudgets(shapes) {
+  const density = clamp(Number(config.morphStrokeGuideDensity ?? 0.6), 0, 1);
+  const active = shapes
+    .map((shape, index) => ({ shape, index, points: shape.strokeGuidePoints?.length ? shape.strokeGuidePoints : shape.strokeVisualPoints || [] }))
+    .filter(({ points, shape }) => points.length && (shape.alpha ?? 1) > 0.001);
+  const totalPoints = active.reduce((sum, item) => sum + item.points.length, 0);
+  const target = clamp(Math.round(totalPoints * density), 0, totalPoints);
+  shapes.forEach((shape) => { shape.strokeGuideCount = 0; });
+  if (target <= 0 || !active.length) return shapes;
+  const weighted = active.map((item) => {
+    const exact = target * item.points.length / Math.max(1, totalPoints);
+    return { ...item, exact, count: Math.floor(exact), remainder: exact - Math.floor(exact) };
+  });
+  let assigned = weighted.reduce((sum, item) => sum + item.count, 0);
+  weighted
+    .sort((a, b) => b.remainder - a.remainder || a.index - b.index)
+    .forEach((item) => {
+      if (assigned < target) {
+        item.count += 1;
+        assigned += 1;
+      }
+    });
+  weighted.forEach(({ shape, count, points }) => {
+    shape.strokeGuideCount = clamp(count, 0, points.length);
+  });
+  return shapes;
+}
+
+function resetMorphStrokeDecorationFrameState() {
+  morphStrokeDecorationFrameState.circleLabelDrawn = false;
+}
+
+function renderMorphStrokeDrawEffect(ctx, mix) {
+  resetMorphStrokeDecorationFrameState();
+  const timeline = morphStrokeDrawTimeline(mix.raw);
+  if (mix.raw <= 0.0001) {
+    morphApplyStrokeGuideBudgets(morphApplyStrokeVisualPointBudgets(mix.current.map((shape, index) => morphStrokeStaticShape(shape, index)))).forEach((shape) => drawMorphStrokeShape(ctx, shape));
+    return;
+  }
+  if (timeline.fadeAlpha > 0.001) {
+    morphApplyStrokeGuideBudgets(morphApplyStrokeVisualPointBudgets(mix.current.map((shape, index) => morphStrokeStaticShape(shape, index, { alpha: 0.95 * timeline.fadeAlpha })))).forEach((shape) => drawMorphStrokeShape(ctx, shape));
+  }
+  if (timeline.guideProgress > 0.001 || timeline.bodyProgress > 0.001) {
+    morphApplyStrokeGuideBudgets(morphApplyStrokeVisualPointBudgets(mix.next.map((shape, index) => morphStrokeStaticShape(shape, index, {
+        alpha: 0.95,
+        guideProgress: timeline.guideProgress,
+        pathProgress: timeline.bodyProgress,
+        stagger: true,
+      })))).forEach((shape) => drawMorphStrokeShape(ctx, shape));
+  }
+}
+
 function morphStableShapeSeed(shape, fallbackIndex) {
   const seed = Number(shape?.seed);
   if (Number.isFinite(seed)) return seed;
@@ -657,15 +819,30 @@ function renderMorphEffect(now) {
     }
     return;
   }
+  if (config.morphRenderMode === "stroke" && config.morphStrokeMotionMode === "draw") {
+    renderMorphStrokeDrawEffect(ctx, mix);
+    if (now - (system.lastDebugAt || 0) > 250) {
+      system.lastDebugAt = now;
+      window.__motionDebug.morphFrameCount = config.particleKeyframes.length;
+      window.__motionDebug.morphShapeCount = Math.max(mix.current.length, mix.next.length);
+      window.__motionDebug.morphProgress = mix.raw;
+    }
+    return;
+  }
   const pairs = morphTransitionPairs(mix.current, mix.next);
   ctx.fillStyle = config.morphColor;
-  pairs.forEach((pair, index) => {
+  const shapes = pairs.map((pair, index) => {
     const currentShape = pair.currentIndex == null ? null : mix.current[pair.currentIndex] ?? null;
     const nextShape = pair.nextIndex == null ? null : mix.next[pair.nextIndex] ?? null;
     const a = currentShape ?? morphShapeAt(mix.current, index, nextShape);
     const b = nextShape ?? morphShapeAt(mix.next, pair.nextIndex ?? index, a);
-    drawMorphShape(ctx, morphInterpolatedShape(a, b, index, mix, now));
+    return morphInterpolatedShape(a, b, index, mix, now);
   });
+  if (config.morphRenderMode === "stroke") {
+    resetMorphStrokeDecorationFrameState();
+    morphApplyStrokeGuideBudgets(morphApplyStrokeVisualPointBudgets(shapes));
+  }
+  shapes.forEach((shape) => drawMorphShape(ctx, shape));
   if (now - (system.lastDebugAt || 0) > 250) {
     system.lastDebugAt = now;
     window.__motionDebug.morphFrameCount = config.particleKeyframes.length;
@@ -824,7 +1001,7 @@ function drawMorphFilledShape(ctx, shape) {
 function morphStrokeDesiredPointCount(points) {
   const manual = Math.round(Number(config.morphStrokePointCount) || 0);
   if (manual > 0) return clamp(manual, 1, points.length);
-  return clamp(Math.round(points.length * 0.28), 3, Math.min(18, points.length));
+  return clamp(MORPH_STROKE_AUTO_POINT_COUNT, 3, points.length);
 }
 
 function morphCornerPointIndices(points, maxCount, exactCount = false) {
@@ -1028,7 +1205,7 @@ function morphLineToCanvasBounds(point, direction, width, height) {
   };
 }
 
-function drawMorphGuideSegment(ctx, anchor, target, color, alpha, progress, width) {
+function drawMorphGuideSegment(ctx, anchor, target, color, alpha, progress, width, dashed = false) {
   const end = {
     x: anchor.x + (target.x - anchor.x) * clamp(progress, 0, 1),
     y: anchor.y + (target.y - anchor.y) * clamp(progress, 0, 1),
@@ -1040,6 +1217,7 @@ function drawMorphGuideSegment(ctx, anchor, target, color, alpha, progress, widt
   ctx.strokeStyle = gradient;
   ctx.lineWidth = width;
   ctx.lineCap = "round";
+  if (dashed) ctx.setLineDash([Math.max(2, width * 5.4), Math.max(2, width * 3.2)]);
   ctx.beginPath();
   ctx.moveTo(anchor.x, anchor.y);
   ctx.lineTo(end.x, end.y);
@@ -1047,7 +1225,7 @@ function drawMorphGuideSegment(ctx, anchor, target, color, alpha, progress, widt
   ctx.restore();
 }
 
-function drawMorphFadingGuideLine(ctx, point, direction, width, height, color, alpha, progress, lineWidth, lengthRatio = 1) {
+function drawMorphFadingGuideLine(ctx, point, direction, width, height, color, alpha, progress, lineWidth, lengthRatio = 1, dashed = false) {
   const bounds = morphLineToCanvasBounds(point, direction, width, height);
   const ratio = clamp(lengthRatio, 0.08, 1);
   const start = {
@@ -1058,52 +1236,78 @@ function drawMorphFadingGuideLine(ctx, point, direction, width, height, color, a
     x: point.x + (bounds.end.x - point.x) * ratio,
     y: point.y + (bounds.end.y - point.y) * ratio,
   };
-  drawMorphGuideSegment(ctx, point, start, color, alpha, progress, lineWidth);
-  drawMorphGuideSegment(ctx, point, end, color, alpha, progress, lineWidth);
+  drawMorphGuideSegment(ctx, point, start, color, alpha, progress, lineWidth, dashed);
+  drawMorphGuideSegment(ctx, point, end, color, alpha, progress, lineWidth, dashed);
 }
 
-function morphStrokeGuideItems(visualPoints, seed) {
+function morphStrokeGuideItems(visualPoints, seed, explicitCount = null) {
   if (!visualPoints.length) return [];
-  const count = clamp(Math.round(visualPoints.length * 0.32), 1, Math.max(1, Math.ceil(visualPoints.length * 0.45)));
+  const density = clamp(Number(config.morphStrokeGuideDensity ?? 0.6), 0, 1);
+  const count = clamp(explicitCount == null ? Math.round(visualPoints.length * density) : Math.round(explicitCount), 0, visualPoints.length);
+  if (count <= 0) return [];
   const rng = seededRandom(`${seed}|guides|${visualPoints.length}|${config.morphStrokePointCount}`);
+  const dashRatio = clamp(Number(config.morphStrokeDashRatio) || 0, 0, 1);
+  const goldenCount = clamp(Math.round(count * 0.22), 0, count);
+  const dashedCount = clamp(Math.round(count * dashRatio), 0, count);
   return visualPoints
-    .map((point, index) => ({
-      point,
-      index,
-      score: rng(),
-      axis: rng() < 0.42 ? "x" : (rng() < 0.72 ? "y" : "both"),
-      lengthX: 0.16 + rng() * 0.72,
-      lengthY: 0.16 + rng() * 0.72,
-    }))
+    .map((point, index) => {
+      const score = rng();
+      const slopeSign = rng() < 0.5 ? -1 : 1;
+      return {
+        point,
+        index,
+        score,
+        dashScore: rng(),
+        kindScore: rng(),
+        kind: "orthogonal",
+        dashed: false,
+        stagger: rng(),
+        axis: "both",
+        goldenDirection: { x: 1, y: slopeSign / ((1 + Math.sqrt(5)) / 2) },
+        lengthX: 0.16 + rng() * 0.72,
+        lengthY: 0.16 + rng() * 0.72,
+      };
+    })
     .sort((a, b) => a.score - b.score)
     .slice(0, count)
+    .map((item, itemIndex, items) => ({
+      ...item,
+      kind: [...items].sort((a, b) => a.kindScore - b.kindScore).slice(0, goldenCount).includes(item) ? "golden" : "orthogonal",
+      dashed: [...items].sort((a, b) => a.dashScore - b.dashScore).slice(0, dashedCount).includes(item),
+    }))
     .sort((a, b) => a.index - b.index);
+}
+
+function morphStrokeCircleIsDashed(seed, count) {
+  return seededRandom(`${seed}|circle-dash|${count}`)() < clamp(Number(config.morphStrokeDashRatio) || 0, 0, 1);
 }
 
 function morphNearestCirclePair(visualPoints, seed) {
   if (visualPoints.length < 3) return null;
   const rng = seededRandom(`${seed}|circle|${visualPoints.length}|stable-triple`);
   const count = visualPoints.length;
-  const start = Math.floor(rng() * count);
   const maxOffset = Math.min(3, count - 1);
-  let firstOffset = 1 + Math.floor(rng() * maxOffset);
-  let secondOffset = 1 + Math.floor(rng() * maxOffset);
-  if (firstOffset === secondOffset) secondOffset = (secondOffset % maxOffset) + 1;
-  const firstGap = Math.min(firstOffset, secondOffset);
-  const secondGap = Math.max(firstOffset, secondOffset);
-  let a = start;
-  let b = (start + firstGap) % count;
-  let c = (start + secondGap) % count;
-  if (a === b || b === c || a === c) {
-    a = 0;
-    b = Math.min(1, count - 1);
-    c = Math.min(2, count - 1);
+  const candidates = [];
+  for (let start = 0; start < count; start += 1) {
+    for (let firstOffset = 1; firstOffset <= maxOffset; firstOffset += 1) {
+      for (let secondOffset = firstOffset + 1; secondOffset <= maxOffset; secondOffset += 1) {
+        const a = start;
+        const b = (start + firstOffset) % count;
+        const c = (start + secondOffset) % count;
+        if (a === b || b === c || a === c) continue;
+        const circle = morphCircleThroughThreePoints(visualPoints[a], visualPoints[b], visualPoints[c]);
+        if (!circle) continue;
+        const inside = circle.center.x - circle.radius >= 1 && circle.center.x + circle.radius <= 99 && circle.center.y - circle.radius >= 1 && circle.center.y + circle.radius <= 99;
+        const radiusScore = Math.abs(circle.radius - 18);
+        candidates.push({ circle, inside, score: (inside ? 0 : 1000) + radiusScore + rng() * 0.01 });
+      }
+    }
   }
-  const circle = morphCircleThroughThreePoints(visualPoints[a], visualPoints[b], visualPoints[c]);
-  if (!circle) return null;
+  const best = candidates.sort((a, b) => a.score - b.score)[0];
+  if (!best) return null;
   return {
-    center: circle.center,
-    radius: circle.radius,
+    center: best.circle.center,
+    radius: Math.min(best.circle.radius, 46),
     direction: rng() > 0.5 ? 1 : -1,
   };
 }
@@ -1129,16 +1333,20 @@ function morphCircleThroughThreePoints(a, b, c) {
   return { center, radius };
 }
 
-function drawMorphProgressiveCircle(ctx, circle, color, alpha, progress, lineWidth) {
+function drawMorphProgressiveCircle(ctx, circle, color, alpha, progress, lineWidth, dashed = false) {
   if (!circle || progress <= 0) return;
   const center = morphCanvasPoint(circle.center);
-  const radius = circle.radius / 100 * state.particleSystem.viewport.size;
+  const rawRadius = circle.radius / 100 * state.particleSystem.viewport.size;
+  const maxRadius = Math.max(0, Math.min(center.x, particleCanvas.width - center.x, center.y, particleCanvas.height - center.y) - lineWidth * 1.5);
+  const radius = Math.min(rawRadius, maxRadius);
+  if (radius <= lineWidth * 2) return;
   const startAngle = -Math.PI / 2;
   const endAngle = startAngle + Math.PI * 2 * clamp(progress, 0, 1) * circle.direction;
   ctx.save();
   ctx.strokeStyle = colorToRgbaText(color, alpha);
   ctx.lineWidth = lineWidth;
   ctx.lineCap = "round";
+  if (dashed) ctx.setLineDash([Math.max(2, lineWidth * 5.2), Math.max(2, lineWidth * 3.4)]);
   ctx.beginPath();
   ctx.arc(center.x, center.y, radius, startAngle, endAngle, circle.direction < 0);
   ctx.stroke();
@@ -1148,6 +1356,199 @@ function drawMorphProgressiveCircle(ctx, circle, color, alpha, progress, lineWid
 function morphColorSelfAlpha(color) {
   const parts = typeof parseColorValue === "function" ? parseColorValue(color) : null;
   return clamp(Number(parts?.a ?? 1), 0, 1);
+}
+
+function morphGuideItemProgress(baseProgress, item, index, count, staggered) {
+  const base = clamp(baseProgress, 0, 1);
+  if (!staggered) return base;
+  const orderedDelay = count <= 1 ? 0 : index / Math.max(1, count - 1) * 0.34;
+  const randomDelay = (Number(item.stagger) || 0) * 0.16;
+  const delay = clamp(orderedDelay + randomDelay, 0, 0.72);
+  const duration = Math.max(0.18, 1 - delay);
+  return organicEase(clamp((base - delay) / duration, 0, 1));
+}
+
+function morphStrokeDecorationAmount() {
+  return clamp(Number(config.morphStrokeDecoration) || 0, 0, 1);
+}
+
+function morphStrokeDecorationSizeAmount() {
+  return clamp(Number(config.morphStrokeDecorationSize ?? 1), 0.45, 2.4);
+}
+
+function morphStrokeGuideDensityAmount() {
+  return clamp(Number(config.morphStrokeGuideDensity ?? 0.6), 0, 1);
+}
+
+function morphStrokeDecorationEnabled(key) {
+  return config[key] !== false;
+}
+
+function morphStrokeDecorationPick(seed, salt, amount) {
+  return seededRandom(`${seed}|decor|${salt}`)() < clamp(amount, 0, 1);
+}
+
+function morphCanvasBounds(points) {
+  const canvasPoints = points.map(morphCanvasPoint);
+  return canvasPoints.reduce((bounds, point) => ({
+    minX: Math.min(bounds.minX, point.x),
+    minY: Math.min(bounds.minY, point.y),
+    maxX: Math.max(bounds.maxX, point.x),
+    maxY: Math.max(bounds.maxY, point.y),
+  }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+}
+
+function drawMorphDecorationFrame(ctx, shape, color, alpha, seed, progress, lineWidth) {
+  if (progress <= 0.75) return;
+  const bounds = morphCanvasBounds(shape.points);
+  if (!Number.isFinite(bounds.minX)) return;
+  const viewport = state.particleSystem.viewport;
+  const pad = Math.max(8, viewport.size * 0.028);
+  const width = Math.max(0.5, lineWidth * 0.42);
+  ctx.save();
+  ctx.strokeStyle = colorToRgbaText(color, alpha * organicEase(clamp((progress - 0.75) / 0.25, 0, 1)));
+  ctx.lineWidth = width;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.setLineDash([Math.max(2, width * 5.4), Math.max(2, width * 3.2)]);
+  ctx.strokeRect(bounds.minX - pad, bounds.minY - pad, bounds.maxX - bounds.minX + pad * 2, bounds.maxY - bounds.minY + pad * 2);
+  ctx.restore();
+}
+
+function drawMorphPerpendicularMarker(ctx, point, color, alpha, size) {
+  ctx.save();
+  ctx.strokeStyle = colorToRgbaText(color, alpha);
+  ctx.lineWidth = Math.max(0.5, size * 0.12);
+  ctx.lineCap = "square";
+  ctx.beginPath();
+  ctx.moveTo(point.x, point.y + size);
+  ctx.lineTo(point.x + size, point.y + size);
+  ctx.lineTo(point.x + size, point.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function morphStrokeEndpointCode(seed) {
+  const rng = seededRandom(seed);
+  const letter = String.fromCharCode(65 + Math.floor(rng() * 26));
+  const first = String(Math.floor(rng() * 100)).padStart(2, "0");
+  const second = String(Math.floor(rng() * 1000)).padStart(3, "0");
+  return `${letter}-${first},${second}`;
+}
+
+function morphStrokeDraftingFontSize() {
+  return Math.max(5, state.particleSystem.viewport.size * 0.009) * morphStrokeDecorationSizeAmount();
+}
+
+function drawMorphEndpointCode(ctx, point, color, alpha, seed, size) {
+  const rng = seededRandom(`${seed}|offset`);
+  const angle = rng() * Math.PI * 2;
+  const fontSize = morphStrokeDraftingFontSize();
+  const offset = Math.max(7, fontSize * 2);
+  ctx.save();
+  ctx.fillStyle = colorToRgbaText(color, alpha);
+  ctx.font = `${fontSize}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(morphStrokeEndpointCode(seed), point.x + Math.cos(angle) * offset, point.y + Math.sin(angle) * offset);
+  ctx.restore();
+}
+
+function drawMorphDimensionArrowhead(ctx, tip, angle, size) {
+  const back = Math.max(2, size);
+  const wing = back * 0.52;
+  ctx.beginPath();
+  ctx.moveTo(tip.x, tip.y);
+  ctx.lineTo(tip.x - Math.cos(angle) * back + Math.sin(angle) * wing, tip.y - Math.sin(angle) * back - Math.cos(angle) * wing);
+  ctx.lineTo(tip.x - Math.cos(angle) * back - Math.sin(angle) * wing, tip.y - Math.sin(angle) * back + Math.cos(angle) * wing);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawMorphCircleLabel(ctx, circle, color, alpha, seed, progress) {
+  const amount = morphStrokeDecorationAmount();
+  if (!circle || amount <= 0 || progress <= 0.35) return false;
+  const center = morphCanvasPoint(circle.center);
+  const rawRadius = circle.radius / 100 * state.particleSystem.viewport.size;
+  const maxRadius = Math.max(0, Math.min(center.x, particleCanvas.width - center.x, center.y, particleCanvas.height - center.y) - 4);
+  const radius = Math.min(rawRadius, maxRadius);
+  if (radius <= 4) return false;
+  const kind = seededRandom(`${seed}|dimension-kind`)() < 0.5 ? "diameter" : "radius";
+  const text = `\u2300 ${Number((radius / state.particleSystem.viewport.size * 200).toFixed(1))}`;
+  const angle = seededRandom(`${seed}|dimension-angle`)() > 0.5 ? -Math.PI / 5.8 : Math.PI / 5.8;
+  const radiusAngle = angle + Math.PI / 2.35;
+  const labelAlpha = alpha * organicEase(clamp((progress - 0.35) / 0.35, 0, 1));
+  const from = { x: center.x - Math.cos(angle) * radius, y: center.y - Math.sin(angle) * radius };
+  const to = { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius };
+  const radiusEnd = { x: center.x + Math.cos(radiusAngle) * radius, y: center.y + Math.sin(radiusAngle) * radius };
+  const fontSize = morphStrokeDraftingFontSize();
+  const arrowSize = Math.max(2.5, fontSize * 0.72);
+  const lineWidth = Math.max(0.5, state.particleSystem.viewport.size * 0.0012);
+  ctx.save();
+  ctx.strokeStyle = colorToRgbaText(color, labelAlpha);
+  ctx.fillStyle = colorToRgbaText(color, labelAlpha);
+  ctx.lineWidth = lineWidth;
+  ctx.font = `${fontSize}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  if (kind === "diameter") {
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+    drawMorphDimensionArrowhead(ctx, to, angle, arrowSize);
+    drawMorphDimensionArrowhead(ctx, from, angle + Math.PI, arrowSize);
+    ctx.translate(center.x + Math.cos(angle) * radius * 0.38, center.y + Math.sin(angle) * radius * 0.38);
+    ctx.rotate(angle);
+    ctx.fillText(text, 0, -arrowSize * 0.75);
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(center.x, center.y);
+    ctx.lineTo(radiusEnd.x, radiusEnd.y);
+    ctx.stroke();
+    drawMorphDimensionArrowhead(ctx, radiusEnd, radiusAngle, arrowSize);
+    ctx.translate(center.x + Math.cos(radiusAngle) * radius * 0.56, center.y + Math.sin(radiusAngle) * radius * 0.56);
+    ctx.rotate(radiusAngle);
+    ctx.fillText(`R ${Number((radius / state.particleSystem.viewport.size * 100).toFixed(1))}`, 0, -arrowSize * 0.75);
+  }
+  ctx.restore();
+  return true;
+}
+
+function drawMorphStrokeDecorations(ctx, shape, guideItems, guideProgress, circle, seed, color, alpha, lineWidth) {
+  const amount = morphStrokeDecorationAmount();
+  if (amount <= 0 || alpha <= 0.001) return;
+  const endpointItems = guideItems
+    .map((item, index) => ({ item, index, anchor: morphCanvasPoint(item.point), progress: morphGuideItemProgress(guideProgress, item, index, guideItems.length, Boolean(shape.strokeGuideStagger)) }))
+    .filter(({ progress }) => progress > 0.98);
+  const markerSize = Math.max(1.5, state.particleSystem.viewport.size * 0.006);
+  endpointItems
+    .map(({ anchor, index }) => ({ point: anchor, index, score: seededRandom(`${seed}|perp|${index}`)() }))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, clamp(Math.round(endpointItems.length * amount * 0.36), 0, endpointItems.length))
+    .forEach(({ point }) => drawMorphPerpendicularMarker(ctx, point, color, alpha * 0.72, markerSize));
+  if (morphStrokeDecorationEnabled("morphStrokeCodeDecoration")) {
+    const codeCount = endpointItems.length ? clamp(Math.round(endpointItems.length * amount), 0, endpointItems.length) : 0;
+    endpointItems
+      .map(({ anchor, index }) => ({ point: anchor, index, score: seededRandom(`${seed}|code|${index}`)() }))
+      .sort((a, b) => a.score - b.score)
+      .slice(0, codeCount)
+      .forEach(({ point, index }) => drawMorphEndpointCode(ctx, point, color, alpha * 0.84, `${seed}|code|${index}`, markerSize));
+  }
+  const forceCircleLabel = amount > 0.3 && !morphStrokeDecorationFrameState.circleLabelDrawn;
+  if (morphStrokeDecorationPick(seed, "circle-label", amount) || forceCircleLabel) {
+    if (drawMorphCircleLabel(ctx, circle, color, alpha * 0.86, seed, guideProgress)) {
+      morphStrokeDecorationFrameState.circleLabelDrawn = true;
+    }
+  }
+  if (morphStrokeDecorationEnabled("morphStrokeFrameDecoration") && morphStrokeDecorationPick(seed, "frame", amount)) {
+    drawMorphDecorationFrame(ctx, shape, color, alpha * 0.72, seed, guideProgress, lineWidth);
+  }
+}
+
+function morphVisualPointPathFraction(point, shape) {
+  const sourceIndex = Number(point.sourceIndex ?? point.slotIndex ?? 0);
+  return clamp(sourceIndex / Math.max(1, shape.points.length), 0, 1);
 }
 
 function drawMorphStrokeShape(ctx, shape) {
@@ -1161,29 +1562,40 @@ function drawMorphStrokeShape(ctx, shape) {
   const visualPoints = shape.strokeVisualPoints?.length ? shape.strokeVisualPoints : morphStrokeVisualPoints(shape.points);
   const guidePoints = shape.strokeGuidePoints?.length ? shape.strokeGuidePoints : visualPoints;
   const canvasVisualPoints = visualPoints.map((point) => ({ ...morphCanvasPoint(point), sourceIndex: point.sourceIndex, slotIndex: point.slotIndex }));
-  const guideItems = morphStrokeGuideItems(guidePoints, shape.strokeSeed || "morph-stroke");
+  const guideItems = morphStrokeGuideItems(guidePoints, shape.strokeSeed || "morph-stroke", shape.strokeGuideCount);
   const guideColor = config.morphStrokeGuideColor || config.morphStrokeLineColor;
   const guideAlpha = alpha * 0.62 * morphColorSelfAlpha(guideColor);
   const lineAlpha = alpha * morphColorSelfAlpha(config.morphStrokeLineColor);
   const pointAlpha = alpha * morphColorSelfAlpha(config.morphStrokePointColor);
+  const decorationAlpha = alpha * morphColorSelfAlpha(guideColor);
   ctx.save();
   ctx.globalAlpha = 1;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-  if (guideAlpha > 0.001) {
+  if (guideAlpha > 0.001 && guideItems.length) {
     ctx.shadowColor = guideColor;
     ctx.shadowBlur = viewport.size * 0.004 * clamp(config.morphBreath, 0, 1);
-    guideItems.forEach(({ point, axis, lengthX, lengthY }) => {
+    guideItems.forEach((item, itemIndex) => {
+      const { point, axis, lengthX, lengthY, dashed, kind, goldenDirection } = item;
       const anchor = morphCanvasPoint(point);
       const guideWidth = Math.max(0.5, lineWidth * 0.42);
-      if (axis === "x" || axis === "both") {
-        drawMorphFadingGuideLine(ctx, anchor, { x: 1, y: 0 }, particleCanvas.width, particleCanvas.height, guideColor, guideAlpha, guideProgress, guideWidth, lengthX);
-      }
-      if (axis === "y" || axis === "both") {
-        drawMorphFadingGuideLine(ctx, anchor, { x: 0, y: 1 }, particleCanvas.width, particleCanvas.height, guideColor, guideAlpha, guideProgress, guideWidth, lengthY);
+      const itemProgress = morphGuideItemProgress(guideProgress, item, itemIndex, guideItems.length, Boolean(shape.strokeGuideStagger));
+      if (kind === "golden") {
+        const length = Math.max(lengthX, lengthY);
+        drawMorphFadingGuideLine(ctx, anchor, goldenDirection, particleCanvas.width, particleCanvas.height, guideColor, guideAlpha, itemProgress, guideWidth, length, dashed);
+      } else {
+        if (axis === "x" || axis === "both") {
+          drawMorphFadingGuideLine(ctx, anchor, { x: 1, y: 0 }, particleCanvas.width, particleCanvas.height, guideColor, guideAlpha, itemProgress, guideWidth, lengthX, dashed);
+        }
+        if (axis === "y" || axis === "both") {
+          drawMorphFadingGuideLine(ctx, anchor, { x: 0, y: 1 }, particleCanvas.width, particleCanvas.height, guideColor, guideAlpha, itemProgress, guideWidth, lengthY, dashed);
+        }
       }
     });
-    drawMorphProgressiveCircle(ctx, morphNearestCirclePair(guidePoints, shape.strokeSeed || "morph-stroke"), guideColor, guideAlpha, guideProgress, Math.max(0.5, lineWidth * 0.5));
+    const circleSeed = shape.strokeSeed || "morph-stroke";
+    const circle = morphNearestCirclePair(guidePoints, circleSeed);
+    drawMorphProgressiveCircle(ctx, circle, guideColor, guideAlpha, guideProgress, Math.max(0.5, lineWidth * 0.5), morphStrokeCircleIsDashed(circleSeed, guidePoints.length));
+    drawMorphStrokeDecorations(ctx, shape, guideItems, guideProgress, circle, circleSeed, guideColor, decorationAlpha, lineWidth);
   }
   if (lineAlpha > 0.001) {
     ctx.shadowColor = config.morphStrokeLineColor;
@@ -1196,6 +1608,7 @@ function drawMorphStrokeShape(ctx, shape) {
     ctx.shadowBlur = 0;
     ctx.fillStyle = colorToRgbaText(config.morphStrokePointColor, pointAlpha);
     canvasVisualPoints.forEach((point) => {
+      if (pathProgress < morphVisualPointPathFraction(point, shape)) return;
       ctx.beginPath();
       ctx.arc(point.x, point.y, pointRadius, 0, Math.PI * 2);
       ctx.fill();
@@ -1247,11 +1660,19 @@ const config = ${JSON.stringify({
   morphStrokeGuideColor: config.morphStrokeGuideColor,
   morphStrokePointSize: config.morphStrokePointSize,
   morphStrokeLineWidth: config.morphStrokeLineWidth,
+  morphStrokeMotionMode: config.morphStrokeMotionMode,
+  morphStrokeGuideDensity: config.morphStrokeGuideDensity,
+  morphStrokeDashRatio: config.morphStrokeDashRatio,
+  morphStrokeDecoration: config.morphStrokeDecoration,
+  morphStrokeDecorationSize: config.morphStrokeDecorationSize,
+  morphStrokeCodeDecoration: config.morphStrokeCodeDecoration,
+  morphStrokeFrameDecoration: config.morphStrokeFrameDecoration,
 })};
 const canvas = document.querySelector("#stage");
 const ctx = canvas.getContext("2d");
 let viewport = { x: 0, y: 0, size: 1, width: 1, height: 1 };
 const startedAt = performance.now();
+const strokeDecorationFrameState = { circleLabelDrawn: false };
 function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
 function seededRandom(seed) {
   let hash = 2166136261;
@@ -1510,6 +1931,133 @@ function interpolatedShape(a, b, index, mix, now) {
     alpha: a.phantom && b.phantom ? 0 : 0.95,
   };
 }
+function strokeDrawTimeline(raw) {
+  const interval = Math.max(400, config.morphFrameIntervalMs);
+  const transition = Math.min(Math.max(120, config.morphTransitionMs), interval);
+  const fadeEnd = clamp(300 / transition, 0.08, 0.46);
+  const blankEnd = clamp(fadeEnd + clamp(130 / transition, 0.04, 0.18), fadeEnd, 0.72);
+  const bodyStart = clamp(blankEnd + (1 - blankEnd) * 0.6, blankEnd + 0.04, 0.92);
+  const p = clamp(raw, 0, 1);
+  return {
+    fadeAlpha: p <= 0 ? 1 : organicEase(clamp(1 - p / fadeEnd, 0, 1)),
+    guideProgress: organicEase(clamp((p - blankEnd) / Math.max(0.08, 1 - blankEnd), 0, 1)),
+    bodyProgress: organicEase(clamp((p - bodyStart) / Math.max(0.08, 1 - bodyStart), 0, 1)),
+  };
+}
+function strokeStaticShape(shape, index, options = {}) {
+  const alpha = options.alpha == null ? 0.95 : options.alpha;
+  const guideProgress = options.guideProgress == null ? 1 : options.guideProgress;
+  const pathProgress = options.pathProgress == null ? 1 : options.pathProgress;
+  const visualPoints = strokeVisualPoints(shape.points || []);
+  return {
+    ...shape,
+    strokeVisualPoints: visualPoints,
+    strokeGuidePoints: visualPoints,
+    strokeProgress: pathProgress,
+    strokeGuideProgress: guideProgress,
+    strokeGuideStagger: Boolean(options.stagger),
+    strokeSeed: shapeStrokeSeed(shape, index),
+    alpha,
+  };
+}
+function applyStrokeVisualPointBudgets(shapes) {
+  const manual = Math.round(Number(config.morphStrokePointCount) || 0);
+  const desiredTotal = manual > 0 ? manual : 18;
+  const active = shapes.map((shape, index) => ({
+    shape,
+    index,
+    capacity: shape.points && shape.points.length ? shape.points.length : 0,
+  })).filter(({ shape, capacity }) => capacity > 0 && (shape.alpha == null ? 1 : shape.alpha) > 0.001);
+  const totalCapacity = active.reduce((sum, item) => sum + item.capacity, 0);
+  const target = clamp(desiredTotal, 0, totalCapacity);
+  shapes.forEach((shape) => {
+    shape.strokeVisualPoints = [];
+    shape.strokeGuidePoints = [];
+  });
+  if (target <= 0 || !active.length) return shapes;
+  const minPerShape = target >= active.length * 3 ? 3 : (target >= active.length ? 1 : 0);
+  let remaining = target;
+  active.forEach((item) => {
+    item.count = Math.min(item.capacity, minPerShape);
+    item.remainingCapacity = item.capacity - item.count;
+    remaining -= item.count;
+  });
+  if (remaining > 0) {
+    const totalRemainingCapacity = active.reduce((sum, item) => sum + item.remainingCapacity, 0);
+    const weighted = active.map((item) => {
+      const exact = totalRemainingCapacity <= 0 ? 0 : remaining * item.remainingCapacity / totalRemainingCapacity;
+      const extra = Math.min(item.remainingCapacity, Math.floor(exact));
+      return { ...item, extra, remainder: exact - extra };
+    });
+    let assigned = weighted.reduce((sum, item) => sum + item.extra, 0);
+    weighted.sort((a, b) => b.remainder - a.remainder || a.index - b.index).forEach((item) => {
+      if (assigned < remaining && item.extra < item.remainingCapacity) {
+        item.extra += 1;
+        assigned += 1;
+      }
+    });
+    weighted.forEach((item) => {
+      item.shape.strokeVisualCount = clamp(item.count + item.extra, 0, item.capacity);
+    });
+  } else {
+    active.forEach((item) => {
+      item.shape.strokeVisualCount = clamp(item.count, 0, item.capacity);
+    });
+  }
+  active.forEach(({ shape }) => {
+    const count = Math.round(shape.strokeVisualCount || 0);
+    const points = count > 0 ? sampleStrokeVisualPoints(shape.points, count, manual > 0) : [];
+    shape.strokeVisualPoints = points;
+    shape.strokeGuidePoints = points;
+  });
+  return shapes;
+}
+function applyStrokeGuideBudgets(shapes) {
+  const density = clamp(Number(config.morphStrokeGuideDensity == null ? 0.6 : config.morphStrokeGuideDensity), 0, 1);
+  const active = shapes.map((shape, index) => ({
+    shape,
+    index,
+    points: shape.strokeGuidePoints && shape.strokeGuidePoints.length ? shape.strokeGuidePoints : shape.strokeVisualPoints || [],
+  })).filter(({ points, shape }) => points.length && (shape.alpha == null ? 1 : shape.alpha) > 0.001);
+  const totalPoints = active.reduce((sum, item) => sum + item.points.length, 0);
+  const target = clamp(Math.round(totalPoints * density), 0, totalPoints);
+  shapes.forEach((shape) => { shape.strokeGuideCount = 0; });
+  if (target <= 0 || !active.length) return shapes;
+  const weighted = active.map((item) => {
+    const exact = target * item.points.length / Math.max(1, totalPoints);
+    return { ...item, exact, count: Math.floor(exact), remainder: exact - Math.floor(exact) };
+  });
+  let assigned = weighted.reduce((sum, item) => sum + item.count, 0);
+  weighted.sort((a, b) => b.remainder - a.remainder || a.index - b.index).forEach((item) => {
+    if (assigned < target) {
+      item.count += 1;
+      assigned += 1;
+    }
+  });
+  weighted.forEach(({ shape, count, points }) => {
+    shape.strokeGuideCount = clamp(count, 0, points.length);
+  });
+  return shapes;
+}
+function renderStrokeDraw(mix) {
+  resetStrokeDecorationFrameState();
+  const timeline = strokeDrawTimeline(mix.raw);
+  if (mix.raw <= 0.0001) {
+    applyStrokeGuideBudgets(applyStrokeVisualPointBudgets(mix.current.map((shape, index) => strokeStaticShape(shape, index)))).forEach((shape) => drawStrokeShape(shape));
+    return;
+  }
+  if (timeline.fadeAlpha > 0.001) {
+    applyStrokeGuideBudgets(applyStrokeVisualPointBudgets(mix.current.map((shape, index) => strokeStaticShape(shape, index, { alpha: 0.95 * timeline.fadeAlpha })))).forEach((shape) => drawStrokeShape(shape));
+  }
+  if (timeline.guideProgress > 0.001 || timeline.bodyProgress > 0.001) {
+    applyStrokeGuideBudgets(applyStrokeVisualPointBudgets(mix.next.map((shape, index) => strokeStaticShape(shape, index, {
+      alpha: 0.95,
+      guideProgress: timeline.guideProgress,
+      pathProgress: timeline.bodyProgress,
+      stagger: true,
+    })))).forEach((shape) => drawStrokeShape(shape));
+  }
+}
 function stableShapeSeed(shape, fallbackIndex) {
   const seed = Number(shape?.seed);
   if (Number.isFinite(seed)) return seed;
@@ -1700,10 +2248,183 @@ function colorToRgba(color, alpha) {
 function colorSelfAlpha(color) {
   return clamp(Number(colorParts(color).a || 0), 0, 1);
 }
+function guideItemProgress(baseProgress, item, index, count, staggered) {
+  const base = clamp(baseProgress, 0, 1);
+  if (!staggered) return base;
+  const orderedDelay = count <= 1 ? 0 : index / Math.max(1, count - 1) * 0.34;
+  const randomDelay = (Number(item.stagger) || 0) * 0.16;
+  const delay = clamp(orderedDelay + randomDelay, 0, 0.72);
+  const duration = Math.max(0.18, 1 - delay);
+  return organicEase(clamp((base - delay) / duration, 0, 1));
+}
+function decorationAmount() {
+  return clamp(Number(config.morphStrokeDecoration) || 0, 0, 1);
+}
+function decorationSizeAmount() {
+  return clamp(Number(config.morphStrokeDecorationSize == null ? 1 : config.morphStrokeDecorationSize), 0.45, 2.4);
+}
+function guideDensityAmount() {
+  return clamp(Number(config.morphStrokeGuideDensity == null ? 0.6 : config.morphStrokeGuideDensity), 0, 1);
+}
+function decorationEnabled(key) {
+  return config[key] !== false;
+}
+function decorationPick(seed, salt, amount) {
+  return seededRandom(seed + "|decor|" + salt)() < clamp(amount, 0, 1);
+}
+function resetStrokeDecorationFrameState() {
+  strokeDecorationFrameState.circleLabelDrawn = false;
+}
+function canvasBounds(points) {
+  const canvasPoints = points.map(toCanvas);
+  return canvasPoints.reduce((bounds, point) => ({
+    minX: Math.min(bounds.minX, point.x),
+    minY: Math.min(bounds.minY, point.y),
+    maxX: Math.max(bounds.maxX, point.x),
+    maxY: Math.max(bounds.maxY, point.y),
+  }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+}
+function drawDecorationFrame(shape, color, alpha, seed, progress, lineWidth) {
+  if (progress <= 0.75) return;
+  const bounds = canvasBounds(shape.points);
+  if (!Number.isFinite(bounds.minX)) return;
+  const pad = Math.max(8, viewport.size * 0.028);
+  const width = Math.max(0.5, lineWidth * 0.42);
+  ctx.save();
+  ctx.strokeStyle = colorToRgba(color, alpha * organicEase(clamp((progress - 0.75) / 0.25, 0, 1)));
+  ctx.lineWidth = width;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.setLineDash([Math.max(2, width * 5.4), Math.max(2, width * 3.2)]);
+  ctx.strokeRect(bounds.minX - pad, bounds.minY - pad, bounds.maxX - bounds.minX + pad * 2, bounds.maxY - bounds.minY + pad * 2);
+  ctx.restore();
+}
+function drawPerpendicularMarker(point, color, alpha, size) {
+  ctx.save();
+  ctx.strokeStyle = colorToRgba(color, alpha);
+  ctx.lineWidth = Math.max(0.5, size * 0.12);
+  ctx.lineCap = "square";
+  ctx.beginPath();
+  ctx.moveTo(point.x, point.y + size);
+  ctx.lineTo(point.x + size, point.y + size);
+  ctx.lineTo(point.x + size, point.y);
+  ctx.stroke();
+  ctx.restore();
+}
+function strokeEndpointCode(seed) {
+  const rng = seededRandom(seed);
+  const letter = String.fromCharCode(65 + Math.floor(rng() * 26));
+  const first = String(Math.floor(rng() * 100)).padStart(2, "0");
+  const second = String(Math.floor(rng() * 1000)).padStart(3, "0");
+  return letter + "-" + first + "," + second;
+}
+function draftingFontSize() {
+  return Math.max(5, viewport.size * 0.009) * decorationSizeAmount();
+}
+function drawEndpointCode(point, color, alpha, seed, size) {
+  const rng = seededRandom(seed + "|offset");
+  const angle = rng() * Math.PI * 2;
+  const fontSize = draftingFontSize();
+  const offset = Math.max(7, fontSize * 2);
+  ctx.save();
+  ctx.fillStyle = colorToRgba(color, alpha);
+  ctx.font = fontSize + "px ui-monospace, SFMono-Regular, Menlo, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(strokeEndpointCode(seed), point.x + Math.cos(angle) * offset, point.y + Math.sin(angle) * offset);
+  ctx.restore();
+}
+function drawDimensionArrowhead(tip, angle, size) {
+  const back = Math.max(2, size);
+  const wing = back * 0.52;
+  ctx.beginPath();
+  ctx.moveTo(tip.x, tip.y);
+  ctx.lineTo(tip.x - Math.cos(angle) * back + Math.sin(angle) * wing, tip.y - Math.sin(angle) * back - Math.cos(angle) * wing);
+  ctx.lineTo(tip.x - Math.cos(angle) * back - Math.sin(angle) * wing, tip.y - Math.sin(angle) * back + Math.cos(angle) * wing);
+  ctx.closePath();
+  ctx.fill();
+}
+function drawCircleLabel(circle, color, alpha, seed, progress) {
+  const amount = decorationAmount();
+  if (!circle || amount <= 0 || progress <= 0.35) return false;
+  const center = toCanvas(circle.center);
+  const rawRadius = circle.radius / 100 * viewport.size;
+  const maxRadius = Math.max(0, Math.min(center.x, canvas.width - center.x, center.y, canvas.height - center.y) - 4);
+  const radius = Math.min(rawRadius, maxRadius);
+  if (radius <= 4) return false;
+  const kind = seededRandom(seed + "|dimension-kind")() < 0.5 ? "diameter" : "radius";
+  const text = "\u2300 " + Number((radius / viewport.size * 200).toFixed(1));
+  const angle = seededRandom(seed + "|dimension-angle")() > 0.5 ? -Math.PI / 5.8 : Math.PI / 5.8;
+  const radiusAngle = angle + Math.PI / 2.35;
+  const labelAlpha = alpha * organicEase(clamp((progress - 0.35) / 0.35, 0, 1));
+  const from = { x: center.x - Math.cos(angle) * radius, y: center.y - Math.sin(angle) * radius };
+  const to = { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius };
+  const radiusEnd = { x: center.x + Math.cos(radiusAngle) * radius, y: center.y + Math.sin(radiusAngle) * radius };
+  const fontSize = draftingFontSize();
+  const arrowSize = Math.max(2.5, fontSize * 0.72);
+  const lineWidth = Math.max(0.5, viewport.size * 0.0012);
+  ctx.save();
+  ctx.strokeStyle = colorToRgba(color, labelAlpha);
+  ctx.fillStyle = colorToRgba(color, labelAlpha);
+  ctx.lineWidth = lineWidth;
+  ctx.font = fontSize + "px ui-monospace, SFMono-Regular, Menlo, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  if (kind === "diameter") {
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+    drawDimensionArrowhead(to, angle, arrowSize);
+    drawDimensionArrowhead(from, angle + Math.PI, arrowSize);
+    ctx.translate(center.x + Math.cos(angle) * radius * 0.38, center.y + Math.sin(angle) * radius * 0.38);
+    ctx.rotate(angle);
+    ctx.fillText(text, 0, -arrowSize * 0.75);
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(center.x, center.y);
+    ctx.lineTo(radiusEnd.x, radiusEnd.y);
+    ctx.stroke();
+    drawDimensionArrowhead(radiusEnd, radiusAngle, arrowSize);
+    ctx.translate(center.x + Math.cos(radiusAngle) * radius * 0.56, center.y + Math.sin(radiusAngle) * radius * 0.56);
+    ctx.rotate(radiusAngle);
+    ctx.fillText("R " + Number((radius / viewport.size * 100).toFixed(1)), 0, -arrowSize * 0.75);
+  }
+  ctx.restore();
+  return true;
+}
+function drawStrokeDecorations(shape, guideItems, guideProgress, circle, seed, color, alpha, lineWidth) {
+  const amount = decorationAmount();
+  if (amount <= 0 || alpha <= 0.001) return;
+  const endpointItems = guideItems.map((item, index) => ({ item, index, anchor: toCanvas(item.point), progress: guideItemProgress(guideProgress, item, index, guideItems.length, Boolean(shape.strokeGuideStagger)) })).filter(({ progress }) => progress > 0.98);
+  const markerSize = Math.max(1.5, viewport.size * 0.006);
+  endpointItems
+    .map(({ anchor, index }) => ({ point: anchor, index, score: seededRandom(seed + "|perp|" + index)() }))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, clamp(Math.round(endpointItems.length * amount * 0.36), 0, endpointItems.length))
+    .forEach(({ point }) => drawPerpendicularMarker(point, color, alpha * 0.72, markerSize));
+  if (decorationEnabled("morphStrokeCodeDecoration")) {
+    const codeCount = endpointItems.length ? clamp(Math.round(endpointItems.length * amount), 0, endpointItems.length) : 0;
+    endpointItems
+      .map(({ anchor, index }) => ({ point: anchor, index, score: seededRandom(seed + "|code|" + index)() }))
+      .sort((a, b) => a.score - b.score)
+      .slice(0, codeCount)
+      .forEach(({ point, index }) => drawEndpointCode(point, color, alpha * 0.84, seed + "|code|" + index, markerSize));
+  }
+  const forceCircleLabel = amount > 0.3 && !strokeDecorationFrameState.circleLabelDrawn;
+  if (decorationPick(seed, "circle-label", amount) || forceCircleLabel) {
+    if (drawCircleLabel(circle, color, alpha * 0.86, seed, guideProgress)) {
+      strokeDecorationFrameState.circleLabelDrawn = true;
+    }
+  }
+  if (decorationEnabled("morphStrokeFrameDecoration") && decorationPick(seed, "frame", amount)) {
+    drawDecorationFrame(shape, color, alpha * 0.72, seed, guideProgress, lineWidth);
+  }
+}
 function strokeDesiredPointCount(points) {
   const manual = Math.round(Number(config.morphStrokePointCount) || 0);
   if (manual > 0) return clamp(manual, 1, points.length);
-  return clamp(Math.round(points.length * 0.28), 3, Math.min(18, points.length));
+  return clamp(18, 3, points.length);
 }
 function cornerPointIndices(points, maxCount, exactCount = false) {
   if (points.length < 3) return points.map((_, index) => index);
@@ -1897,7 +2618,7 @@ function lineToCanvasBounds(point, direction, width, height) {
     end: { x: point.x + dx * positive, y: point.y + dy * positive },
   };
 }
-function drawGuideSegment(anchor, target, color, alpha, progress, width) {
+function drawGuideSegment(anchor, target, color, alpha, progress, width, dashed = false) {
   const end = { x: anchor.x + (target.x - anchor.x) * clamp(progress, 0, 1), y: anchor.y + (target.y - anchor.y) * clamp(progress, 0, 1) };
   const gradient = ctx.createLinearGradient(anchor.x, anchor.y, end.x, end.y);
   gradient.addColorStop(0, colorToRgba(color, alpha));
@@ -1906,13 +2627,14 @@ function drawGuideSegment(anchor, target, color, alpha, progress, width) {
   ctx.strokeStyle = gradient;
   ctx.lineWidth = width;
   ctx.lineCap = "round";
+  if (dashed) ctx.setLineDash([Math.max(2, width * 5.4), Math.max(2, width * 3.2)]);
   ctx.beginPath();
   ctx.moveTo(anchor.x, anchor.y);
   ctx.lineTo(end.x, end.y);
   ctx.stroke();
   ctx.restore();
 }
-function drawFadingGuideLine(point, direction, color, alpha, progress, lineWidth, lengthRatio = 1) {
+function drawFadingGuideLine(point, direction, color, alpha, progress, lineWidth, lengthRatio = 1, dashed = false) {
   const bounds = lineToCanvasBounds(point, direction, canvas.width, canvas.height);
   const ratio = clamp(lengthRatio, 0.08, 1);
   const start = {
@@ -1923,46 +2645,70 @@ function drawFadingGuideLine(point, direction, color, alpha, progress, lineWidth
     x: point.x + (bounds.end.x - point.x) * ratio,
     y: point.y + (bounds.end.y - point.y) * ratio,
   };
-  drawGuideSegment(point, start, color, alpha, progress, lineWidth);
-  drawGuideSegment(point, end, color, alpha, progress, lineWidth);
+  drawGuideSegment(point, start, color, alpha, progress, lineWidth, dashed);
+  drawGuideSegment(point, end, color, alpha, progress, lineWidth, dashed);
 }
-function strokeGuideItems(visualPoints, seed) {
+function strokeGuideItems(visualPoints, seed, explicitCount = null) {
   if (!visualPoints.length) return [];
-  const count = clamp(Math.round(visualPoints.length * 0.32), 1, Math.max(1, Math.ceil(visualPoints.length * 0.45)));
+  const density = clamp(Number(config.morphStrokeGuideDensity == null ? 0.6 : config.morphStrokeGuideDensity), 0, 1);
+  const count = clamp(explicitCount == null ? Math.round(visualPoints.length * density) : Math.round(explicitCount), 0, visualPoints.length);
+  if (count <= 0) return [];
   const rng = seededRandom(seed + "|guides|" + visualPoints.length + "|" + config.morphStrokePointCount);
-  return visualPoints.map((point, index) => ({
-    point,
-    index,
-    score: rng(),
-    axis: rng() < 0.42 ? "x" : (rng() < 0.72 ? "y" : "both"),
-    lengthX: 0.16 + rng() * 0.72,
-    lengthY: 0.16 + rng() * 0.72,
-  })).sort((a, b) => a.score - b.score).slice(0, count).sort((a, b) => a.index - b.index);
+  const dashRatio = clamp(Number(config.morphStrokeDashRatio) || 0, 0, 1);
+  const goldenCount = clamp(Math.round(count * 0.22), 0, count);
+  const dashedCount = clamp(Math.round(count * dashRatio), 0, count);
+  return visualPoints.map((point, index) => {
+    const score = rng();
+    const slopeSign = rng() < 0.5 ? -1 : 1;
+    return {
+      point,
+      index,
+      score,
+      dashScore: rng(),
+      kindScore: rng(),
+      kind: "orthogonal",
+      dashed: false,
+      stagger: rng(),
+      axis: "both",
+      goldenDirection: { x: 1, y: slopeSign / ((1 + Math.sqrt(5)) / 2) },
+      lengthX: 0.16 + rng() * 0.72,
+      lengthY: 0.16 + rng() * 0.72,
+    };
+  }).sort((a, b) => a.score - b.score).slice(0, count).map((item, itemIndex, items) => ({
+    ...item,
+    kind: [...items].sort((a, b) => a.kindScore - b.kindScore).slice(0, goldenCount).includes(item) ? "golden" : "orthogonal",
+    dashed: [...items].sort((a, b) => a.dashScore - b.dashScore).slice(0, dashedCount).includes(item),
+  })).sort((a, b) => a.index - b.index);
+}
+function strokeCircleIsDashed(seed, count) {
+  return seededRandom(seed + "|circle-dash|" + count)() < clamp(Number(config.morphStrokeDashRatio) || 0, 0, 1);
 }
 function nearestCirclePair(visualPoints, seed) {
   if (visualPoints.length < 3) return null;
   const rng = seededRandom(seed + "|circle|" + visualPoints.length + "|stable-triple");
   const count = visualPoints.length;
-  const start = Math.floor(rng() * count);
   const maxOffset = Math.min(3, count - 1);
-  let firstOffset = 1 + Math.floor(rng() * maxOffset);
-  let secondOffset = 1 + Math.floor(rng() * maxOffset);
-  if (firstOffset === secondOffset) secondOffset = (secondOffset % maxOffset) + 1;
-  const firstGap = Math.min(firstOffset, secondOffset);
-  const secondGap = Math.max(firstOffset, secondOffset);
-  let a = start;
-  let b = (start + firstGap) % count;
-  let c = (start + secondGap) % count;
-  if (a === b || b === c || a === c) {
-    a = 0;
-    b = Math.min(1, count - 1);
-    c = Math.min(2, count - 1);
+  const candidates = [];
+  for (let start = 0; start < count; start += 1) {
+    for (let firstOffset = 1; firstOffset <= maxOffset; firstOffset += 1) {
+      for (let secondOffset = firstOffset + 1; secondOffset <= maxOffset; secondOffset += 1) {
+        const a = start;
+        const b = (start + firstOffset) % count;
+        const c = (start + secondOffset) % count;
+        if (a === b || b === c || a === c) continue;
+        const circle = circleThroughThreePoints(visualPoints[a], visualPoints[b], visualPoints[c]);
+        if (!circle) continue;
+        const inside = circle.center.x - circle.radius >= 1 && circle.center.x + circle.radius <= 99 && circle.center.y - circle.radius >= 1 && circle.center.y + circle.radius <= 99;
+        const radiusScore = Math.abs(circle.radius - 18);
+        candidates.push({ circle, inside, score: (inside ? 0 : 1000) + radiusScore + rng() * 0.01 });
+      }
+    }
   }
-  const circle = circleThroughThreePoints(visualPoints[a], visualPoints[b], visualPoints[c]);
-  if (!circle) return null;
+  const best = candidates.sort((a, b) => a.score - b.score)[0];
+  if (!best) return null;
   return {
-    center: circle.center,
-    radius: circle.radius,
+    center: best.circle.center,
+    radius: Math.min(best.circle.radius, 46),
     direction: rng() > 0.5 ? 1 : -1,
   };
 }
@@ -1986,20 +2732,28 @@ function circleThroughThreePoints(a, b, c) {
   if (!Number.isFinite(radius)) return null;
   return { center, radius };
 }
-function drawProgressiveCircle(circle, color, alpha, progress, lineWidth) {
+function drawProgressiveCircle(circle, color, alpha, progress, lineWidth, dashed = false) {
   if (!circle || progress <= 0) return;
   const center = toCanvas(circle.center);
-  const radius = circle.radius / 100 * viewport.size;
+  const rawRadius = circle.radius / 100 * viewport.size;
+  const maxRadius = Math.max(0, Math.min(center.x, canvas.width - center.x, center.y, canvas.height - center.y) - lineWidth * 1.5);
+  const radius = Math.min(rawRadius, maxRadius);
+  if (radius <= lineWidth * 2) return;
   const startAngle = -Math.PI / 2;
   const endAngle = startAngle + Math.PI * 2 * clamp(progress, 0, 1) * circle.direction;
   ctx.save();
   ctx.strokeStyle = colorToRgba(color, alpha);
   ctx.lineWidth = lineWidth;
   ctx.lineCap = "round";
+  if (dashed) ctx.setLineDash([Math.max(2, lineWidth * 5.2), Math.max(2, lineWidth * 3.4)]);
   ctx.beginPath();
   ctx.arc(center.x, center.y, radius, startAngle, endAngle, circle.direction < 0);
   ctx.stroke();
   ctx.restore();
+}
+function visualPointPathFraction(point, shape) {
+  const sourceIndex = Number(point.sourceIndex ?? point.slotIndex ?? 0);
+  return clamp(sourceIndex / Math.max(1, shape.points.length), 0, 1);
 }
 function drawStrokeShape(shape) {
   if (!shape.points.length) return;
@@ -2014,24 +2768,36 @@ function drawStrokeShape(shape) {
   const guideAlpha = alpha * 0.62 * colorSelfAlpha(guideColor);
   const lineAlpha = alpha * colorSelfAlpha(config.morphStrokeLineColor);
   const pointAlpha = alpha * colorSelfAlpha(config.morphStrokePointColor);
+  const decorationAlpha = alpha * colorSelfAlpha(guideColor);
   ctx.save();
   ctx.globalAlpha = 1;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  if (guideAlpha > 0.001) {
+  const guideItems = strokeGuideItems(guidePoints, shape.strokeSeed || "morph-stroke", shape.strokeGuideCount);
+  if (guideAlpha > 0.001 && guideItems.length) {
     ctx.shadowColor = guideColor;
     ctx.shadowBlur = viewport.size * 0.004 * clamp(config.morphBreath, 0, 1);
-    strokeGuideItems(guidePoints, shape.strokeSeed || "morph-stroke").forEach(({ point, axis, lengthX, lengthY }) => {
+    guideItems.forEach((item, itemIndex) => {
+      const { point, axis, lengthX, lengthY, dashed, kind, goldenDirection } = item;
       const anchor = toCanvas(point);
       const guideWidth = Math.max(0.5, lineWidth * 0.42);
-      if (axis === "x" || axis === "both") {
-        drawFadingGuideLine(anchor, { x: 1, y: 0 }, guideColor, guideAlpha, guideProgress, guideWidth, lengthX);
-      }
-      if (axis === "y" || axis === "both") {
-        drawFadingGuideLine(anchor, { x: 0, y: 1 }, guideColor, guideAlpha, guideProgress, guideWidth, lengthY);
+      const itemProgress = guideItemProgress(guideProgress, item, itemIndex, guideItems.length, Boolean(shape.strokeGuideStagger));
+      if (kind === "golden") {
+        const length = Math.max(lengthX, lengthY);
+        drawFadingGuideLine(anchor, goldenDirection, guideColor, guideAlpha, itemProgress, guideWidth, length, dashed);
+      } else {
+        if (axis === "x" || axis === "both") {
+          drawFadingGuideLine(anchor, { x: 1, y: 0 }, guideColor, guideAlpha, itemProgress, guideWidth, lengthX, dashed);
+        }
+        if (axis === "y" || axis === "both") {
+          drawFadingGuideLine(anchor, { x: 0, y: 1 }, guideColor, guideAlpha, itemProgress, guideWidth, lengthY, dashed);
+        }
       }
     });
-    drawProgressiveCircle(nearestCirclePair(guidePoints, shape.strokeSeed || "morph-stroke"), guideColor, guideAlpha, guideProgress, Math.max(0.5, lineWidth * 0.5));
+    const circleSeed = shape.strokeSeed || "morph-stroke";
+    const circle = nearestCirclePair(guidePoints, circleSeed);
+    drawProgressiveCircle(circle, guideColor, guideAlpha, guideProgress, Math.max(0.5, lineWidth * 0.5), strokeCircleIsDashed(circleSeed, guidePoints.length));
+    drawStrokeDecorations(shape, guideItems, guideProgress, circle, circleSeed, guideColor, decorationAlpha, lineWidth);
   }
   if (lineAlpha > 0.001) {
     ctx.shadowColor = config.morphStrokeLineColor;
@@ -2043,7 +2809,9 @@ function drawStrokeShape(shape) {
   if (pointAlpha > 0.001) {
     ctx.shadowBlur = 0;
     ctx.fillStyle = colorToRgba(config.morphStrokePointColor, pointAlpha);
-    visualPoints.map(toCanvas).forEach((point) => {
+    visualPoints.forEach((visualPoint) => {
+      if (pathProgress < visualPointPathFraction(visualPoint, shape)) return;
+      const point = toCanvas(visualPoint);
       ctx.beginPath();
       ctx.arc(point.x, point.y, pointRadius, 0, Math.PI * 2);
       ctx.fill();
@@ -2090,15 +2858,26 @@ function tick(now) {
     requestAnimationFrame(tick);
     return;
   }
+  if (config.morphRenderMode === "stroke" && config.morphStrokeMotionMode === "draw") {
+    renderStrokeDraw(mix);
+    requestAnimationFrame(tick);
+    return;
+  }
   const pairs = transitionPairs(mix.current, mix.next);
+  const shapes = [];
   for (let index = 0; index < pairs.length; index += 1) {
     const pair = pairs[index];
     const currentShape = pair.currentIndex == null ? null : mix.current[pair.currentIndex] || null;
     const nextShape = pair.nextIndex == null ? null : mix.next[pair.nextIndex] || null;
     const a = currentShape || shapeAt(mix.current, index, nextShape);
     const b = nextShape || shapeAt(mix.next, pair.nextIndex ?? index, a);
-    drawShape(interpolatedShape(a, b, index, mix, now));
+    shapes.push(interpolatedShape(a, b, index, mix, now));
   }
+  if (config.morphRenderMode === "stroke") {
+    resetStrokeDecorationFrameState();
+    applyStrokeGuideBudgets(applyStrokeVisualPointBudgets(shapes));
+  }
+  shapes.forEach((shape) => drawShape(shape));
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
