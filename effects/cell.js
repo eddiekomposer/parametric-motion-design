@@ -841,9 +841,48 @@ function countCellOverlaps(cells) {
   return count;
 }
 
+function cellReferenceImages() {
+  return state.cellSystem.referenceImages || [];
+}
+
+function cellTextureForCell(cell, index) {
+  const images = cellReferenceImages();
+  if (!images.length) return null;
+  const rng = seededRandom(`cell-texture|${config.cellSeed}|${cell.index ?? index}|${cell.seed ?? 0}`);
+  const imageIndex = Math.floor(rng() * images.length) % images.length;
+  const maxRotation = Math.PI / 6;
+  return {
+    image: images[imageIndex]?.image,
+    rotation: (rng() * 2 - 1) * maxRotation,
+  };
+}
+
+function drawCellTexture(ctx, cell, point, radius, texture) {
+  const image = texture?.image;
+  if (!image || !image.complete || !(image.naturalWidth || image.width)) return false;
+  const imageWidth = image.naturalWidth || image.width;
+  const imageHeight = image.naturalHeight || image.height;
+  const targetSize = radius * 2;
+  const scale = Math.max(targetSize / Math.max(1, imageWidth), targetSize / Math.max(1, imageHeight));
+  const width = imageWidth * scale;
+  const height = imageHeight * scale;
+  ctx.save();
+  ctx.globalAlpha = clamp(cell.opacity ?? config.cellOpacity, 0, 1);
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.translate(point.x, point.y);
+  ctx.rotate(texture.rotation);
+  ctx.drawImage(image, -width / 2, -height / 2, width, height);
+  ctx.restore();
+  return true;
+}
+
 function drawCellCircle(ctx, cell) {
   const point = particleToCanvas(cell);
   const radius = Math.max(0.4, cell.r) * state.particleSystem.viewport.size / 100;
+  const texture = cellTextureForCell(cell, cell.index ?? 0);
+  if (drawCellTexture(ctx, cell, point, radius, texture)) return;
   ctx.globalAlpha = clamp(cell.opacity ?? config.cellOpacity, 0, 1);
   ctx.beginPath();
   ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
@@ -852,6 +891,10 @@ function drawCellCircle(ctx, cell) {
 }
 
 function generateCellStandaloneHTML() {
+  const cellImages = (state.cellSystem.referenceImages || []).map((item) => ({
+    name: item.name || "reference",
+    src: item.dataURL,
+  })).filter((item) => item.src);
   const cells = state.cellSystem.cells.map((cell) => ({
     index: Number(cell.index ?? 0),
     x: Number(cell.x.toFixed(3)),
@@ -883,6 +926,7 @@ const canvas = document.querySelector("#stage");
 const ctx = canvas.getContext("2d");
 const cells = ${JSON.stringify(cells)};
 const bounds = ${JSON.stringify(bounds)};
+const cellImageSources = ${JSON.stringify(cellImages)};
 const config = ${JSON.stringify({
   seed: `cell-motion-${config.cellSeed}`,
   cellMotionType: config.cellMotionType,
@@ -893,6 +937,11 @@ const config = ${JSON.stringify({
   cellOpacity: config.cellOpacity,
 })};
 const rings = buildRings(cells);
+const cellImages = cellImageSources.map((item) => {
+  const image = new Image();
+  image.src = item.src;
+  return { ...item, image };
+});
 let viewport = { x: 0, y: 0, size: 1, width: 1, height: 1 };
 const startedAt = performance.now();
 function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
@@ -1398,9 +1447,38 @@ function preventOverlaps(source, allowMove = true) {
   }
   return resolved;
 }
+function textureForCell(cell, index) {
+  if (!cellImages.length) return null;
+  const rng = seededRandom("cell-texture|" + config.seed + "|" + (cell.index ?? index) + "|" + (cell.seed ?? 0));
+  const imageIndex = Math.floor(rng() * cellImages.length) % cellImages.length;
+  const maxRotation = Math.PI / 6;
+  return { image: cellImages[imageIndex].image, rotation: (rng() * 2 - 1) * maxRotation };
+}
+function drawCellTexture(cell, point, radius, texture) {
+  const image = texture && texture.image;
+  if (!image || !image.complete || !(image.naturalWidth || image.width)) return false;
+  const imageWidth = image.naturalWidth || image.width;
+  const imageHeight = image.naturalHeight || image.height;
+  const targetSize = radius * 2;
+  const scale = Math.max(targetSize / Math.max(1, imageWidth), targetSize / Math.max(1, imageHeight));
+  const width = imageWidth * scale;
+  const height = imageHeight * scale;
+  ctx.save();
+  ctx.globalAlpha = clamp(cell.opacity ?? config.cellOpacity, 0, 1);
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.translate(point.x, point.y);
+  ctx.rotate(texture.rotation);
+  ctx.drawImage(image, -width / 2, -height / 2, width, height);
+  ctx.restore();
+  return true;
+}
 function drawCell(cell) {
   const point = pointToCanvas(cell);
   const radius = Math.max(0.4, cell.r) * viewport.size / 100;
+  const texture = textureForCell(cell, cell.index ?? 0);
+  if (drawCellTexture(cell, point, radius, texture)) return;
   ctx.globalAlpha = clamp(cell.opacity ?? config.cellOpacity, 0, 1);
   ctx.beginPath();
   ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);

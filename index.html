@@ -369,6 +369,86 @@
       grid-column: 1 / -1;
     }
 
+    .cell-reference-editor.is-dragging {
+      border-color: rgba(103, 214, 195, 0.72);
+      background: rgba(103, 214, 195, 0.06);
+    }
+
+    .cell-reference-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, 48px);
+      gap: 8px;
+    }
+
+    .cell-reference-tile {
+      position: relative;
+      width: 48px;
+      aspect-ratio: 1;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.045);
+    }
+
+    .cell-reference-tile img {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+    }
+
+    .cell-reference-tile .icon-btn.cell-reference-delete {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      width: 16px;
+      height: 16px;
+      min-height: 16px;
+      padding: 0;
+      border-radius: 999px;
+      border: 1px solid rgba(18, 25, 38, 0.14);
+      color: rgba(17, 24, 39, 0.72);
+      background: #ffffff;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+      font-size: 10px;
+      line-height: 1;
+      opacity: 0;
+      transform: scale(0.86);
+      transition: opacity 120ms ease, transform 120ms ease, color 120ms ease, background 120ms ease;
+    }
+
+    .cell-reference-tile:hover .icon-btn.cell-reference-delete,
+    .cell-reference-tile:focus-within .icon-btn.cell-reference-delete {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    .cell-reference-tile .icon-btn.cell-reference-delete:hover {
+      color: rgba(17, 24, 39, 0.92);
+      border-color: rgba(18, 25, 38, 0.22);
+      background: #ffffff;
+    }
+
+    .cell-reference-add {
+      width: 48px;
+      height: 48px;
+      min-height: 48px;
+      display: grid;
+      place-items: center;
+      border: 1px dashed var(--line-strong);
+      border-radius: 7px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.035);
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .cell-reference-add:hover {
+      color: var(--text);
+      border-color: var(--line-strong);
+      background: rgba(255, 255, 255, 0.07);
+    }
+
     .control::after {
       content: attr(data-tip);
       position: absolute;
@@ -1299,6 +1379,7 @@
               <option value="particle">粒子</option>
               <option value="morph">变形</option>
               <option value="cell">细胞</option>
+              <option value="perspective">透视</option>
               <option value="puzzle">拼图</option>
               <option value="neural">神经网络</option>
             </select>
@@ -1399,6 +1480,7 @@
   <script src="effects/oscilloscope.js?v=20260701-osc-color-fix"></script>
   <script src="effects/particle.js"></script>
   <script src="effects/cell.js"></script>
+  <script src="effects/perspective.js"></script>
   <script src="effects/puzzle.js"></script>
   <script src="effects/morph.js?v=20260703-stroke-dimension-exclusive"></script>
   <script src="effects/neural.js"></script>
@@ -1562,6 +1644,14 @@
         generateLottie: generateCellLottie,
         hideImageOptions: true,
       },
+      perspective: {
+        label: "透视",
+        defaults: perspectiveDefaults,
+        controls: perspectiveControlDefs,
+        prepare: preparePerspectiveEffect,
+        render: renderPerspectiveEffect,
+        generateCode: generatePerspectiveStandaloneHTML,
+      },
       puzzle: {
         label: "拼图",
         defaults: puzzleDefaults,
@@ -1592,6 +1682,7 @@
       ...JSON.parse(JSON.stringify(particleDefaults)),
       ...morphDefaults,
       ...cellDefaults,
+      ...perspectiveDefaults,
       ...puzzleDefaults,
       ...neuralDefaults,
       threshold: 0,
@@ -1615,6 +1706,8 @@
         ["morphStrokeLineColor", "#8F959E"],
         ["morphStrokeGuideColor", "#8F959E"],
         ["cellColor", "#8F959E"],
+        ["perspectiveFillColor", "#8F959E"],
+        ["perspectiveStrokeColor", "#5D5D5F"],
         ["puzzleStrokeColor", "#8F959E"],
         ["neuralNodeColor", "#8F959E"],
         ["neuralCursorColor", "#8F959E"],
@@ -1636,6 +1729,8 @@
       fileName: "sample-shape.svg",
       imageData: null,
       sourceKind: "raster",
+      referenceDataURL: "",
+      referenceSvgText: "",
       usingSampleReference: true,
       svgContours: [],
       svgContourClosed: [],
@@ -1700,9 +1795,23 @@
       cellSystem: {
         cells: [],
         rings: [],
+        referenceImages: [],
         bounds: { minX: 9, minY: 9, maxX: 91, maxY: 91, centerX: 50, centerY: 50 },
         lastSignature: "",
         growCache: null,
+      },
+      perspectiveSystem: {
+        group: null,
+        shadowGroup: null,
+        depthGroup: null,
+        topGroup: null,
+        nodes: [],
+        lastSignature: "",
+        progress: 0,
+        hoverActive: false,
+        pointer: { x: 0, y: 0, active: false },
+        animation: null,
+        hoverListenersAttached: false,
       },
       puzzleSystem: {
         cache: [],
@@ -1769,6 +1878,16 @@
       if (key === "cellCount") return `${Math.round(Number(value))}`;
       if (key === "cellGrowStrength") return `${Number(value).toFixed(2)}x`;
       if (key === "cellColor") return colorToRgbaText(value, config.cellOpacity);
+      if (key.startsWith("perspective")) {
+        if (key === "perspectiveFillColor") return colorToRgbaText(value, config.perspectiveOpacity);
+        if (key === "perspectiveStrokeColor") return colorToRgbaText(value);
+        if (key === "perspectiveOpacity") return `${Math.round(Number(value) * 100)}%`;
+        if (key === "perspectiveHoverMode" || key === "perspectiveUseCustomStyle") return value ? "开" : "关";
+        if (key === "perspectiveRotationDeg") return `${Math.round(Number(value))}deg`;
+        if (key === "perspectiveZOffset") return `${Number(value).toFixed(2)}x`;
+        if (key === "perspectiveLineWidth") return `${Number(value).toFixed(2)}dp`;
+        return key.endsWith("Ms") ? `${(value / 1000).toFixed(1)}s` : Number(value).toFixed(2);
+      }
       if (key.startsWith("puzzle")) {
         if (key === "puzzleStrokeColor") return colorToRgbaText(value, config.puzzleStrokeOpacity);
         if (key === "puzzleStrokeOpacity") return `${Math.round(Number(value) * 100)}%`;
@@ -3546,6 +3665,7 @@
           renderCount: (window.__motionDebug?.renderCount ?? 0) + 1,
           lastFrameAt: now,
         };
+        if (config.effectType !== "perspective" && typeof hidePerspectiveGroup === "function") hidePerspectiveGroup();
         activeEffect().render(now);
       } catch (error) {
         console.error(error);
@@ -3555,6 +3675,7 @@
 
     function refreshPreviewNow() {
       try {
+        if (config.effectType !== "perspective" && typeof hidePerspectiveGroup === "function") hidePerspectiveGroup();
         activeEffect().render(performance.now());
       } catch (error) {
         console.error(error);
@@ -3759,7 +3880,15 @@
         fileChip.textContent = "cell-system";
         pointChip.textContent = `${state.cellSystem.cells.length} cells`;
         rdpChip.textContent = formatControlValue("cellMotionType", config.cellMotionType);
-        harmonicChip.textContent = `${Math.round(Number(config.cellDiversity) || 0)} sizes`;
+        const referenceCount = state.cellSystem.referenceImages?.length || 0;
+        harmonicChip.textContent = referenceCount ? `${referenceCount} refs` : `${Math.round(Number(config.cellDiversity) || 0)} sizes`;
+        return;
+      }
+      if (config.effectType === "perspective") {
+        fileChip.textContent = typeof perspectiveSourceName === "function" ? perspectiveSourceName() : state.fileName;
+        pointChip.textContent = typeof perspectiveSourceKind === "function" && perspectiveSourceKind() === "svg" ? "original SVG" : "original image";
+        rdpChip.textContent = config.perspectiveHoverMode ? "hover reverse" : "loop";
+        harmonicChip.textContent = `${(config.perspectiveDurationMs / 1000).toFixed(1)}s`;
         return;
       }
       if (config.effectType === "puzzle") {
@@ -3842,13 +3971,15 @@
         ].join("\n");
       }
       if (config.effectType === "cell") {
+        const referenceCount = state.cellSystem.referenceImages?.length || 0;
         return [
           "Cell field",
           "organic generated circle cluster",
-          "image upload is not used",
+          referenceCount ? "cell textures = stable random reference images with random rotation" : "cell textures = solid circles",
           "growth = enlarge one cell, neighbors yield, then rebound",
           "",
           `cells = ${state.cellSystem.cells.length}`,
+          `reference images = ${referenceCount}`,
           `motion = ${formatControlValue("cellMotionType", config.cellMotionType)}`,
           `target cells = ${clamp(Math.round(Number(config.cellCount) || state.cellSystem.cells.length), 3, 10)}`,
           `overall size = ${Number(config.cellOverallSize).toFixed(2)}`,
@@ -3856,6 +3987,27 @@
           `grow strength = ${formatControlValue("cellGrowStrength", config.cellGrowStrength)}`,
           `duration = ${(config.cellMotionDurationMs / 1000).toFixed(2)}s`,
           `interval = ${(config.cellMotionIntervalMs / 1000).toFixed(2)}s`,
+        ].join("\n");
+      }
+      if (config.effectType === "perspective") {
+        return [
+          "Perspective view transform",
+          "uploaded reference image is treated as the top view",
+          "isometric view is generated by transforming the original source, no second upload",
+          "no Fourier transform, no contour resampling, no shape reconstruction",
+          "SVG dash/stroke styles are preserved unless custom style is enabled",
+          "image(t) = rotate_z(original, angle * ease(t)) then project top -> isometric",
+          config.perspectiveHoverMode ? "hover = reverse to top at 2x speed, leave = play to isometric" : "loop = top -> isometric -> top, then interval pause",
+          "",
+          `source = ${typeof perspectiveSourceKind === "function" && perspectiveSourceKind() === "svg" ? "original SVG" : "original image"}`,
+          `rotation = ${formatControlValue("perspectiveRotationDeg", config.perspectiveRotationDeg)}`,
+          `z offset = ${formatControlValue("perspectiveZOffset", config.perspectiveZOffset)}`,
+          `duration = ${(config.perspectiveDurationMs / 1000).toFixed(2)}s`,
+          `interval = ${config.perspectiveHoverMode ? "-" : formatControlValue("perspectiveIntervalMs", config.perspectiveIntervalMs)}`,
+          `custom style = ${formatControlValue("perspectiveUseCustomStyle", config.perspectiveUseCustomStyle)}`,
+          `line width = ${config.perspectiveUseCustomStyle ? formatControlValue("perspectiveLineWidth", config.perspectiveLineWidth) : "original"}`,
+          `fill = ${config.perspectiveUseCustomStyle ? formatControlValue("perspectiveFillColor", config.perspectiveFillColor) : "original"}`,
+          `stroke = ${config.perspectiveUseCustomStyle ? formatControlValue("perspectiveStrokeColor", config.perspectiveStrokeColor) : "original"}`,
         ].join("\n");
       }
       if (config.effectType === "puzzle") {
@@ -4097,6 +4249,110 @@
       });
     }
 
+    async function loadCellReferenceFiles(fileList) {
+      const files = Array.from(fileList || []).filter((file) => /^image\//i.test(file.type) || /\.svg$/i.test(file.name || ""));
+      if (!files.length) return;
+      setStatus("Loading");
+      try {
+        const images = await Promise.all(files.map(async (file) => {
+          const dataURL = await fileToDataURL(file);
+          const image = await loadImage(dataURL);
+          return {
+            name: file.name || "reference",
+            dataURL,
+            image,
+            width: image.naturalWidth || image.width || 1,
+            height: image.naturalHeight || image.height || 1,
+          };
+        }));
+        state.cellSystem.referenceImages = [
+          ...(state.cellSystem.referenceImages || []),
+          ...images,
+        ];
+        state.startedAt = performance.now();
+        updateMeta();
+        updateFormulaAndCode();
+        renderMotionControls();
+        refreshPreviewNow();
+        setStatus("Ready");
+      } catch (error) {
+        console.error(error);
+        setStatus("Upload failed");
+      }
+    }
+
+    function clearCellReferenceImages() {
+      state.cellSystem.referenceImages = [];
+      updateMeta();
+      updateFormulaAndCode();
+      renderMotionControls();
+      refreshPreviewNow();
+    }
+
+    function removeCellReferenceImage(index) {
+      const references = state.cellSystem.referenceImages || [];
+      if (index < 0 || index >= references.length) return;
+      state.cellSystem.referenceImages = references.filter((_, itemIndex) => itemIndex !== index);
+      updateMeta();
+      updateFormulaAndCode();
+      renderMotionControls();
+      refreshPreviewNow();
+    }
+
+    function renderCellReferenceEditor(container) {
+      container.innerHTML = "";
+      const editor = document.createElement("div");
+      editor.className = "keyframe-editor cell-reference-editor";
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*,.svg";
+      input.multiple = true;
+      input.className = "file-input";
+      const references = state.cellSystem.referenceImages || [];
+      const list = document.createElement("div");
+      list.className = "keyframe-list cell-reference-list";
+      references.forEach((item, index) => {
+        const tile = document.createElement("div");
+        tile.className = "cell-reference-tile";
+        const image = document.createElement("img");
+        image.src = item.dataURL;
+        image.alt = item.name || "reference";
+        const deleteButton = document.createElement("button");
+        deleteButton.className = "icon-btn cell-reference-delete";
+        deleteButton.type = "button";
+        deleteButton.textContent = "×";
+        deleteButton.ariaLabel = `删除参考图 ${index + 1}`;
+        deleteButton.addEventListener("click", () => removeCellReferenceImage(index));
+        tile.append(image, deleteButton);
+        list.appendChild(tile);
+      });
+      const addTile = document.createElement("button");
+      addTile.className = "cell-reference-add";
+      addTile.type = "button";
+      addTile.textContent = "+";
+      addTile.ariaLabel = "新增参考图";
+      addTile.addEventListener("click", () => input.click());
+      list.appendChild(addTile);
+      input.addEventListener("change", () => {
+        loadCellReferenceFiles(input.files);
+        input.value = "";
+      });
+      editor.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        editor.classList.add("is-dragging");
+      });
+      editor.addEventListener("dragleave", (event) => {
+        if (!editor.contains(event.relatedTarget)) editor.classList.remove("is-dragging");
+      });
+      editor.addEventListener("drop", (event) => {
+        event.preventDefault();
+        editor.classList.remove("is-dragging");
+        loadCellReferenceFiles(event.dataTransfer?.files);
+      });
+      editor.append(input, list);
+      container.appendChild(editor);
+    }
+
     function readImageIntoCanvas(image) {
       const maxSide = config.maxImageSize;
       const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
@@ -4179,9 +4435,12 @@
       state.svgContourClosed = [];
       state.svgContourFilled = [];
       const dataURL = await fileToDataURL(file);
+      state.referenceDataURL = dataURL;
+      state.referenceSvgText = "";
       if (state.sourceKind === "svg") {
         try {
-          const svgEntries = extractSvgContours(await fileToText(file));
+          state.referenceSvgText = await fileToText(file);
+          const svgEntries = extractSvgContours(state.referenceSvgText);
           state.svgContours = svgEntries.map((entry) => entry.points);
           state.svgContourClosed = svgEntries.map((entry) => entry.closed);
           state.svgContourFilled = svgEntries.map((entry) => entry.filled);
@@ -4228,6 +4487,8 @@
       state.fileName = "sample-shape.png";
       state.usingSampleReference = true;
       state.sourceKind = "raster";
+      state.referenceDataURL = canvas.toDataURL("image/png");
+      state.referenceSvgText = "";
       state.svgContours = [];
       state.svgContourClosed = [];
       state.svgContourFilled = [];
@@ -4269,6 +4530,8 @@
         "oscStaggerMs",
         "cellMotionDurationMs",
         "cellMotionIntervalMs",
+        "perspectiveDurationMs",
+        "perspectiveIntervalMs",
         "puzzleMotionDurationMs",
         "puzzleMotionIntervalMs",
       ]).has(key);
@@ -4566,6 +4829,19 @@
         refreshPreviewNow();
         return;
       }
+      if (effectBefore === "perspective") {
+        if (key === "perspectiveHoverMode" || key === "perspectiveUseCustomStyle") renderMotionControls();
+        if (key === "perspectiveDurationMs" || key === "perspectiveIntervalMs" || key === "perspectiveHoverMode") {
+          state.startedAt = performance.now();
+          state.perspectiveSystem.progress = 0;
+          state.perspectiveSystem.animation = null;
+        }
+        activeEffect().prepare();
+        updateMeta();
+        updateFormulaAndCode();
+        refreshPreviewNow();
+        return;
+      }
       if (effectBefore === "neural") {
         if (key === "neuralSource" || key === "neuralNodeShape" || key === "neuralMouseFollow" || key === "neuralSnapCursor") renderMotionControls();
         if (key === "neuralDensity") config[key] = clamp(Math.round(Number(config[key]) || 13), 4, 20);
@@ -4593,12 +4869,15 @@
       const effect = activeEffect();
       effectSelect.value = config.effectType;
       const hasReferenceFrames = Boolean(effect.hasParticleKeyframes);
-      imageCard.classList.toggle("is-hidden", Boolean(effect.hideImageOptions) && !hasReferenceFrames);
-      dropzone.classList.toggle("is-hidden", Boolean(effect.hideImageOptions) || hasReferenceFrames);
-      modeTabs.hidden = hasReferenceFrames;
-      referenceCardTitle.textContent = "参考图";
+      const hasCellReferences = config.effectType === "cell";
+      imageCard.classList.toggle("is-hidden", Boolean(effect.hideImageOptions) && !hasReferenceFrames && !hasCellReferences);
+      dropzone.classList.toggle("is-hidden", Boolean(effect.hideImageOptions) || hasReferenceFrames || hasCellReferences);
+      modeTabs.hidden = hasReferenceFrames || hasCellReferences;
+      referenceCardTitle.textContent = hasCellReferences ? "细胞参考图" : "参考图";
       imageControls.innerHTML = "";
-      if (hasReferenceFrames) {
+      if (hasCellReferences) {
+        renderCellReferenceEditor(imageControls);
+      } else if (hasReferenceFrames) {
         renderParticleKeyframeEditor(imageControls);
       } else if (!effect.hideImageOptions) {
         renderControls(imageControls, imageControlDefs, handleImageControlInput);
