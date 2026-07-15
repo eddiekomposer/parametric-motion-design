@@ -2119,10 +2119,11 @@
         if (key === "neuralCursorColor") return colorToRgbaText(value, config.neuralCursorOpacity);
         if (key === "neuralLineColor") return colorToRgbaText(value, config.neuralLineOpacity);
         if (key === "neuralDensity") {
-          const count = clamp(Math.round(Number(value) || 13), 4, 20);
+          const count = clamp(Math.round(Number(value) || 13), 4, 40);
           if (config.neuralSource === "perspective") return `${count}x${count}x${count}`;
           return `${count}x${count}`;
         }
+        if (key === "neuralGravityRange") return `${clamp(Math.round(Number(value) || 5), 3, 30)}x${clamp(Math.round(Number(value) || 5), 3, 30)}`;
         if (key === "neuralNodeSize" || key === "neuralCursorSize" || key === "neuralLineWidth" || key === "neuralCursorSpeed") return `${Number(value).toFixed(2)}x`;
       }
       if (key === "lineStyle") return value === "constellation" ? "星座" : "有机物";
@@ -4492,6 +4493,7 @@
           `active links = ${state.neuralSystem.links.length}`,
           `node shape = ${formatControlValue("neuralNodeShape", config.neuralNodeShape)}`,
           `density = ${formatControlValue("neuralDensity", config.neuralDensity)}`,
+          `gravity range = ${formatControlValue("neuralGravityRange", config.neuralGravityRange)}`,
           `follow mouse = ${formatControlValue("neuralMouseFollow", config.neuralMouseFollow)}`,
           `snap cursor = ${formatControlValue("neuralSnapCursor", config.neuralSnapCursor)}`,
           `snap interval = ${config.neuralSnapCursor && !config.neuralMouseFollow ? formatControlValue("neuralSnapIntervalMs", config.neuralSnapIntervalMs) : "-"}`,
@@ -5347,7 +5349,8 @@
       }
       if (effectBefore === "neural") {
         if (key === "neuralSource" || key === "neuralNodeShape" || key === "neuralMouseFollow" || key === "neuralSnapCursor") renderMotionControls();
-        if (key === "neuralDensity") config[key] = clamp(Math.round(Number(config[key]) || 13), 4, 20);
+        if (key === "neuralDensity") config[key] = clamp(Math.round(Number(config[key]) || 13), 4, 40);
+        if (key === "neuralGravityRange") config[key] = clamp(Math.round(Number(config[key]) || 5), 3, 30);
         if (key === "neuralNodeSize") config[key] = clamp(Number(config[key]) || 0, 0, 5);
         if (key === "neuralCursorSpeed") config[key] = clamp(Number(config[key]) || 0, 0, 2);
         if (key === "neuralSnapIntervalMs") config[key] = clamp(Number(config[key]) || 900, 300, 3000);

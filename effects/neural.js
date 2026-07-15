@@ -3,6 +3,7 @@ var neuralDefaults = {
   neuralSource: "circle",
   neuralDensity: 13,
   neuralNodeSize: 1.15,
+  neuralGravityRange: 5,
   neuralNodeColor: "#f6f7f1",
   neuralNodeOpacity: 0.88,
   neuralNodeShape: "circle",
@@ -31,8 +32,9 @@ var neuralControlDefs = [
     ],
     tip: "圆形、方形和透视使用程序生成点阵；参考图会按上传图片的前景区域生成点阵。",
   },
-  { key: "neuralDensity", label: "点阵密度", min: 4, max: 20, step: 1, tip: "控制点阵行列数量，例如 13 表示 13x13；透视模式表示 13x13x13。" },
+  { key: "neuralDensity", label: "点阵密度", min: 4, max: 40, step: 1, tip: "控制点阵行列数量，例如 13 表示 13x13；透视模式表示 13x13x13。" },
   { key: "neuralNodeSize", label: "点的大小", min: 0, max: 5, step: 0.05, tip: "控制基础节点大小；设为 0 时普通节点隐藏，靠近光标的节点仍会被放大显示。" },
+  { key: "neuralGravityRange", label: "引力范围", min: 3, max: 30, step: 1, tip: "控制被光标改变的点阵范围，例如 5 约等于 5x5 个点受影响。" },
   { key: "neuralNodeColor", alphaKey: "neuralNodeOpacity", type: "colorAlpha", label: "点颜色", tip: "控制点阵节点颜色和透明度。" },
   {
     key: "neuralNodeShape",
@@ -79,7 +81,7 @@ function prepareNeuralEffect() {
 }
 
 function buildNeuralNodes() {
-  const columns = clamp(Math.round(Number(config.neuralDensity) || neuralDefaults.neuralDensity), 4, 20);
+  const columns = clamp(Math.round(Number(config.neuralDensity) || neuralDefaults.neuralDensity), 4, 40);
   const rows = columns;
   const step = 82 / Math.max(1, columns - 1);
   const nodes = [];
@@ -180,7 +182,7 @@ function makeNeuralReferenceSampler() {
 function makeNeuralSvgReferenceSampler() {
   const contours = (state.normalizedContours || []).filter((contour) => contour.length >= 3);
   if (!contours.length) return (x, y) => Math.hypot(x - 50, y - 50) <= 41.5;
-  const density = clamp(Math.round(Number(config.neuralDensity) || neuralDefaults.neuralDensity), 4, 20);
+  const density = clamp(Math.round(Number(config.neuralDensity) || neuralDefaults.neuralDensity), 4, 40);
   const pathRadius = clamp(42 / density, 1.9, 5.8);
   const closed = state.normalizedContourClosed || [];
   const filled = state.normalizedContourFilled || [];
@@ -342,6 +344,28 @@ function neuralDistance(a, b) {
   const dy = a.y - b.y;
   const dz = neuralIsPerspective() ? ((a.z ?? 50) - (b.z ?? 50)) : 0;
   return Math.hypot(dx, dy, dz);
+}
+
+function neuralDensityCount() {
+  return clamp(Math.round(Number(config.neuralDensity) || neuralDefaults.neuralDensity), 4, 40);
+}
+
+function neuralGravityRange() {
+  return clamp(Math.round(Number(config.neuralGravityRange) || neuralDefaults.neuralGravityRange), 3, 30);
+}
+
+function neuralGridStep() {
+  const density = neuralDensityCount();
+  return (neuralIsPerspective() ? 74 : 82) / Math.max(1, density - 1);
+}
+
+function neuralInfluenceRadius() {
+  return Math.max(neuralGridStep(), neuralGridStep() * (neuralGravityRange() - 1) * 0.5);
+}
+
+function neuralInfluenceLimit(nodes) {
+  const range = neuralGravityRange();
+  return Math.min(nodes.length, Math.max(9, Math.ceil(range * range * (neuralIsPerspective() ? 1.35 : 1))));
 }
 
 function neuralProjectedPoint(point) {
@@ -516,7 +540,8 @@ function nearestNeuralNode(nodes, cursor) {
 }
 
 function neuralActiveLinks(nodes, cursor, skipIndex = -1) {
-  const radius = neuralIsPerspective() ? 24 : 29;
+  const radius = neuralInfluenceRadius();
+  const limit = neuralInfluenceLimit(nodes);
   return nodes
     .map((node, index) => {
       const point = neuralPointForNode(node);
@@ -525,7 +550,7 @@ function neuralActiveLinks(nodes, cursor, skipIndex = -1) {
     })
     .filter((item) => item.influence > 0 && item.index !== skipIndex)
     .sort((a, b) => b.influence - a.influence)
-    .slice(0, 18)
+    .slice(0, limit)
     .sort((a, b) => Math.atan2(a.y - cursor.y, a.x - cursor.x) - Math.atan2(b.y - cursor.y, b.x - cursor.x));
 }
 
@@ -710,7 +735,9 @@ canvas { width: min(82vmin, 720px); height: min(82vmin, 720px); display: block; 
 const nodes = ${JSON.stringify(nodes)};
 const config = ${JSON.stringify({
   neuralSource: config.neuralSource,
+  neuralDensity: config.neuralDensity,
   neuralNodeSize: config.neuralNodeSize,
+  neuralGravityRange: config.neuralGravityRange,
   neuralNodeColor: config.neuralNodeColor,
   neuralNodeOpacity: config.neuralNodeOpacity,
   neuralNodeShape: config.neuralNodeShape,
@@ -774,6 +801,22 @@ function pointForNode(node) {
 }
 function distance3(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y, isPerspective() ? ((a.z ?? 50) - (b.z ?? 50)) : 0);
+}
+function densityCount() {
+  return clamp(Math.round(config.neuralDensity || 13), 4, 40);
+}
+function gravityRange() {
+  return clamp(Math.round(config.neuralGravityRange || 5), 3, 30);
+}
+function gridStep() {
+  return (isPerspective() ? 74 : 82) / Math.max(1, densityCount() - 1);
+}
+function influenceRadius() {
+  return Math.max(gridStep(), gridStep() * (gravityRange() - 1) * 0.5);
+}
+function influenceLimit() {
+  const range = gravityRange();
+  return Math.min(nodes.length, Math.max(9, Math.ceil(range * range * (isPerspective() ? 1.35 : 1))));
 }
 function projectedPoint(point) {
   if (!isPerspective()) return { x: point.x, y: point.y, depth: 0 };
@@ -985,12 +1028,13 @@ function nearestNode() {
   return best;
 }
 function activeLinks(effectiveCursor, skipIndex) {
-  const radius = isPerspective() ? 24 : 29;
+  const radius = influenceRadius();
+  const limit = influenceLimit();
   return nodes.map((node, index) => {
     const point = pointForNode(node);
     const distance = distance3(point, effectiveCursor);
     return { node, index, x: point.x, y: point.y, z: point.z, distance, influence: clamp(1 - distance / radius, 0, 1) };
-  }).filter((item) => item.influence > 0 && item.index !== skipIndex).sort((a, b) => b.influence - a.influence).slice(0, 18);
+  }).filter((item) => item.influence > 0 && item.index !== skipIndex).sort((a, b) => b.influence - a.influence).slice(0, limit);
 }
 function drawNodeShape(point, radius) {
   if (config.neuralNodeShape === "square") ctx.fillRect(point.x - radius, point.y - radius, radius * 2, radius * 2);
