@@ -706,6 +706,207 @@
       font-size: 13px;
     }
 
+    .svg-fidelity-note {
+      grid-column: 1 / -1;
+      margin: 0;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.035);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .flow-gradient-editor {
+      min-width: 0;
+      grid-column: 1 / -1;
+      display: grid;
+      gap: 12px;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .flow-gradient-preview-shell {
+      position: relative;
+      min-width: 0;
+      padding-top: 28px;
+    }
+
+    .flow-gradient-preview {
+      height: 32px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .flow-gradient-marker {
+      position: absolute;
+      top: 0;
+      left: var(--stop-position, 0%);
+      z-index: 1;
+      width: 24px;
+      height: 24px;
+      border: 3px solid var(--panel);
+      border-radius: 6px;
+      background: var(--stop-color, #ffffff);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      transform: translateX(-50%);
+      cursor: ew-resize;
+      touch-action: none;
+    }
+
+    .flow-gradient-marker::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: -8px;
+      width: 8px;
+      height: 8px;
+      border-right: 3px solid var(--panel);
+      border-bottom: 3px solid var(--panel);
+      background: var(--stop-color, #ffffff);
+      transform: translateX(-50%) rotate(45deg);
+    }
+
+    .flow-gradient-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .flow-gradient-title {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .flow-gradient-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .flow-gradient-row {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 60px minmax(112px, 1fr) 60px 30px;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .flow-gradient-number-wrap {
+      position: relative;
+      min-width: 0;
+    }
+
+    .flow-gradient-number {
+      width: 100%;
+      height: 30px;
+      appearance: textfield;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 0 20px 0 8px;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.045);
+      font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .flow-gradient-number::-webkit-inner-spin-button,
+    .flow-gradient-number::-webkit-outer-spin-button {
+      margin: 0;
+      appearance: none;
+    }
+
+    .flow-gradient-number-wrap::after {
+      content: "%";
+      position: absolute;
+      right: 7px;
+      top: 50%;
+      color: var(--muted);
+      font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      transform: translateY(-50%);
+      pointer-events: none;
+    }
+
+    .flow-gradient-color-field {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr);
+      align-items: center;
+      gap: 0;
+      height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.045);
+      overflow: hidden;
+    }
+
+    .flow-gradient-color-field .flow-gradient-color-picker {
+      width: 30px;
+      height: 30px;
+      border: 0;
+      border-right: 1px solid var(--line);
+      border-radius: 0;
+    }
+
+    .flow-gradient-hex {
+      min-width: 0;
+      width: 100%;
+      height: 28px;
+      border: 0;
+      padding: 0 8px;
+      color: var(--text);
+      background: transparent;
+      font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-transform: uppercase;
+    }
+
+    .flow-gradient-hex.is-invalid {
+      color: #d14642;
+      background: rgba(209, 70, 66, 0.08);
+    }
+
+    .flow-gradient-action {
+      position: relative;
+      width: 30px;
+      height: 30px;
+      border: 0;
+      border-radius: 6px;
+      color: var(--muted);
+      background: transparent;
+    }
+
+    .flow-gradient-action:hover {
+      color: var(--text);
+      background: var(--line);
+    }
+
+    .flow-gradient-action:disabled {
+      opacity: 0.32;
+      cursor: not-allowed;
+    }
+
+    .flow-gradient-action::before,
+    .flow-gradient-action--add::after {
+      content: "";
+      position: absolute;
+      left: 8px;
+      right: 8px;
+      top: 14px;
+      height: 1.5px;
+      border-radius: 999px;
+      background: currentColor;
+    }
+
+    .flow-gradient-action--add::after {
+      left: 14px;
+      right: auto;
+      top: 8px;
+      width: 1.5px;
+      height: 14px;
+    }
+
     .icon-btn {
       width: 30px;
       min-height: 30px;
@@ -1751,6 +1952,9 @@
       samples: [],
       coefficients: [],
       particles: [],
+      flowBrushGroup: null,
+      flowBrushSegments: [],
+      flowBrushContourLengths: [],
       lineGroup: null,
       linePaths: [],
       lineTexts: [],
@@ -1834,6 +2038,10 @@
     normalizeParticleSizeForMode();
 
     function formatControlValue(key, value) {
+      if (key === "flowMode") return value === "brush" ? "画笔" : "电流";
+      if (key === "brushOverlapMode") return value === "earlierOnTop" ? "先画在上" : "后画在上";
+      if (key === "brushShadow") return `${Math.round(Number(value) * 100)}%`;
+      if (key === "brushStrokeWidth") return `${Number(value).toFixed(1)}dp`;
       if (key === "pulseCycleMs" && Number(value) === 0) return "关闭";
       if (key === "constellationStaggerMs" || key === "constellationFlickerMs") return `${Math.round(Number(value))}ms`;
       if (key.endsWith("Ms")) return `${(value / 1000).toFixed(1)}s`;
@@ -2197,6 +2405,225 @@
       return segmented;
     }
 
+    let flowGradientStopCounter = 0;
+
+    function nextFlowGradientStopId() {
+      flowGradientStopCounter += 1;
+      return `brush-stop-custom-${Date.now()}-${flowGradientStopCounter}`;
+    }
+
+    function flowGradientCss(stops) {
+      return `linear-gradient(90deg, ${stops
+        .slice()
+        .sort((a, b) => a.position - b.position)
+        .map((stop) => `${colorToRgbaText(stop.color, stop.opacity)} ${Number((stop.position * 100).toFixed(2))}%`)
+        .join(", ")})`;
+    }
+
+    function refreshFlowGradientConfig({ rerender = false } = {}) {
+      refreshFlowBrushGradient();
+      updateMeta();
+      updateFormulaAndCode();
+      refreshPreviewNow();
+      if (rerender) renderMotionControls();
+    }
+
+    function renderFlowGradientEditor(control) {
+      config.brushGradientStops = normalizedFlowBrushStops();
+      const stops = config.brushGradientStops;
+      const editor = document.createElement("section");
+      editor.className = "flow-gradient-editor";
+      editor.title = control.tip;
+
+      const previewShell = document.createElement("div");
+      previewShell.className = "flow-gradient-preview-shell";
+      const preview = document.createElement("div");
+      preview.className = "flow-gradient-preview";
+      preview.setAttribute("aria-label", "渐变颜色预览");
+      previewShell.appendChild(preview);
+
+      const head = document.createElement("div");
+      head.className = "flow-gradient-head";
+      head.innerHTML = `<p class="flow-gradient-title">渐变颜色 Stops</p>`;
+      const addButton = document.createElement("button");
+      addButton.className = "flow-gradient-action flow-gradient-action--add";
+      addButton.type = "button";
+      addButton.setAttribute("aria-label", "添加渐变颜色 Stop");
+      addButton.title = "在当前最大间隔中添加一个颜色 Stop";
+      head.appendChild(addButton);
+
+      const list = document.createElement("div");
+      list.className = "flow-gradient-list";
+
+      const syncPreview = () => {
+        preview.style.background = flowGradientCss(stops);
+        stops.forEach((stop) => {
+          const marker = previewShell.querySelector(`[data-gradient-marker-id="${stop.id}"]`);
+          if (marker) {
+            marker.style.setProperty("--stop-position", `${stop.position * 100}%`);
+            marker.style.setProperty("--stop-color", colorToRgbaText(stop.color, stop.opacity));
+          }
+        });
+      };
+
+      stops.forEach((stop, index) => {
+        const marker = document.createElement("button");
+        marker.className = "flow-gradient-marker";
+        marker.type = "button";
+        marker.dataset.gradientMarkerId = stop.id;
+        marker.setAttribute("aria-label", `拖动渐变 Stop ${index + 1}`);
+        marker.title = `${Math.round(stop.position * 100)}%`;
+        let markerDragging = false;
+        marker.addEventListener("pointerdown", (event) => {
+          markerDragging = true;
+          marker.setPointerCapture?.(event.pointerId);
+          event.preventDefault();
+        });
+        marker.addEventListener("pointermove", (event) => {
+          if (!markerDragging) return;
+          const rect = preview.getBoundingClientRect();
+          if (!rect.width) return;
+          stop.position = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+          const positionInput = list.querySelector(`[data-gradient-position-id="${stop.id}"]`);
+          if (positionInput) positionInput.value = String(Math.round(stop.position * 100));
+          marker.title = `${Math.round(stop.position * 100)}%`;
+          syncPreview();
+          refreshFlowGradientConfig();
+        });
+        const finishMarkerDrag = (event) => {
+          if (!markerDragging) return;
+          markerDragging = false;
+          if (marker.hasPointerCapture?.(event.pointerId)) marker.releasePointerCapture?.(event.pointerId);
+          config.brushGradientStops = normalizedFlowBrushStops();
+          renderMotionControls();
+        };
+        marker.addEventListener("pointerup", finishMarkerDrag);
+        marker.addEventListener("pointercancel", finishMarkerDrag);
+        previewShell.appendChild(marker);
+
+        const row = document.createElement("div");
+        row.className = "flow-gradient-row";
+        row.dataset.gradientStopId = stop.id;
+
+        const positionWrap = document.createElement("label");
+        positionWrap.className = "flow-gradient-number-wrap";
+        const positionInput = document.createElement("input");
+        positionInput.className = "flow-gradient-number";
+        positionInput.type = "number";
+        positionInput.min = "0";
+        positionInput.max = "100";
+        positionInput.step = "1";
+        positionInput.value = String(Math.round(stop.position * 100));
+        positionInput.dataset.gradientPositionId = stop.id;
+        positionInput.setAttribute("aria-label", `渐变 Stop ${index + 1} 位置百分比`);
+        positionWrap.appendChild(positionInput);
+
+        const colorField = document.createElement("label");
+        colorField.className = "flow-gradient-color-field";
+        const colorPicker = document.createElement("input");
+        colorPicker.className = "flow-gradient-color-picker";
+        colorPicker.type = "color";
+        colorPicker.value = stop.color;
+        colorPicker.setAttribute("aria-label", `渐变 Stop ${index + 1} 颜色`);
+        const hexInput = document.createElement("input");
+        hexInput.className = "flow-gradient-hex";
+        hexInput.value = stop.color.slice(1).toUpperCase();
+        hexInput.setAttribute("aria-label", `渐变 Stop ${index + 1} HEX`);
+        colorField.append(colorPicker, hexInput);
+
+        const opacityWrap = document.createElement("label");
+        opacityWrap.className = "flow-gradient-number-wrap";
+        const opacityInput = document.createElement("input");
+        opacityInput.className = "flow-gradient-number";
+        opacityInput.type = "number";
+        opacityInput.min = "0";
+        opacityInput.max = "100";
+        opacityInput.step = "1";
+        opacityInput.value = String(Math.round(stop.opacity * 100));
+        opacityInput.setAttribute("aria-label", `渐变 Stop ${index + 1} 透明度百分比`);
+        opacityWrap.appendChild(opacityInput);
+
+        const removeButton = document.createElement("button");
+        removeButton.className = "flow-gradient-action flow-gradient-action--remove";
+        removeButton.type = "button";
+        removeButton.disabled = stops.length <= 2;
+        removeButton.setAttribute("aria-label", `删除渐变 Stop ${index + 1}`);
+
+        positionInput.addEventListener("input", () => {
+          stop.position = clamp(Number(positionInput.value) / 100, 0, 1);
+          syncPreview();
+          refreshFlowGradientConfig();
+        });
+        positionInput.addEventListener("change", () => {
+          config.brushGradientStops = normalizedFlowBrushStops();
+          renderMotionControls();
+        });
+        colorPicker.addEventListener("input", () => {
+          stop.color = colorPicker.value;
+          hexInput.value = stop.color.slice(1).toUpperCase();
+          hexInput.classList.remove("is-invalid");
+          syncPreview();
+          refreshFlowGradientConfig();
+        });
+        hexInput.addEventListener("input", () => {
+          const parts = parseColorValue(hexInput.value);
+          const valid = Boolean(parts);
+          hexInput.classList.toggle("is-invalid", !valid);
+          if (!valid) return;
+          stop.color = colorPartsToHex(parts);
+          colorPicker.value = stop.color;
+          syncPreview();
+          refreshFlowGradientConfig();
+        });
+        opacityInput.addEventListener("input", () => {
+          stop.opacity = clamp(Number(opacityInput.value) / 100, 0, 1);
+          syncPreview();
+          refreshFlowGradientConfig();
+        });
+        removeButton.addEventListener("click", () => {
+          if (stops.length <= 2) return;
+          config.brushGradientStops = stops.filter((item) => item.id !== stop.id);
+          refreshFlowBrushGradient();
+          renderMotionControls();
+          updateMeta();
+          updateFormulaAndCode();
+          refreshPreviewNow();
+        });
+
+        row.append(positionWrap, colorField, opacityWrap, removeButton);
+        list.appendChild(row);
+      });
+
+      addButton.addEventListener("click", () => {
+        const ordered = stops.slice().sort((a, b) => a.position - b.position);
+        let largest = { start: ordered[0], end: ordered[ordered.length - 1], gap: -1 };
+        for (let index = 0; index < ordered.length - 1; index += 1) {
+          const gap = ordered[index + 1].position - ordered[index].position;
+          if (gap > largest.gap) largest = { start: ordered[index], end: ordered[index + 1], gap };
+        }
+        const position = (largest.start.position + largest.end.position) / 2;
+        const color = parseColorValue(flowBrushColor(position)) || { r: 143, g: 149, b: 158, a: 1 };
+        config.brushGradientStops = [
+          ...stops,
+          {
+            id: nextFlowGradientStopId(),
+            position,
+            color: colorPartsToHex(color),
+            opacity: color.a ?? 1,
+          },
+        ].sort((a, b) => a.position - b.position);
+        refreshFlowBrushGradient();
+        renderMotionControls();
+        updateMeta();
+        updateFormulaAndCode();
+        refreshPreviewNow();
+      });
+
+      syncPreview();
+      editor.append(previewShell, head, list);
+      return editor;
+    }
+
     function updateRangeProgress(input) {
       if (!input || input.type !== "range") return;
       const min = Number(input.min || 0);
@@ -2230,7 +2657,10 @@
         const input = document.createElement("input");
         input.dataset.key = control.key;
         input.title = control.tip;
-        if (control.type === "button") {
+        if (control.type === "gradientStops") {
+          container.appendChild(renderFlowGradientEditor(control));
+          return;
+        } else if (control.type === "button") {
           label.classList.add("control--button");
           const button = document.createElement("button");
           button.className = "small-btn";
@@ -3451,6 +3881,9 @@
         .map((contour, index) => ({ contour, closed: closedFlags[index] ?? true }))
         .filter((item) => item.contour.length >= 2);
       if (!valid.length) return [];
+      if (state.sourceKind === "svg") {
+        return valid.map((item) => item.contour.map((point) => ({ x: point.x, y: point.y })));
+      }
       const lengths = valid.map((item) => pathLength(item.contour, item.closed));
       const totalLength = lengths.reduce((sum, value) => sum + value, 0) || 1;
       return valid.map((item, index) => {
@@ -3758,20 +4191,29 @@
       const valid = contours
         .map((path, index) => ({ path, closed: closedFlags[index] ?? true, filled: filledFlags[index] ?? true }))
         .filter((item) => item.path.length >= 3);
-      state.paths = valid.map((item) => item.path);
+      const preserveSvgGeometry = mode === "svg";
+      state.paths = valid.map((item) => item.path.map((point) => ({ x: point.x, y: point.y })));
       const pathClosed = valid.map((item) => item.closed);
       const pathFilled = valid.map((item) => item.filled);
-      state.paths = applyPointCloudDensity(state.paths, config.sampleRatio, config.simplifyPointCount, pathClosed);
+      if (!preserveSvgGeometry) {
+        state.paths = applyPointCloudDensity(state.paths, config.sampleRatio, config.simplifyPointCount, pathClosed);
+      }
       state.path = state.paths[0] ?? [];
       state.rawData = state.paths.flat();
-      config.smoothWindow = mode === "svg" ? 1 : automaticSmoothWindow(state.rawData.length, mode);
-      state.treeSamples = deterministicSample(state.path, config.sampleRatio);
-      if (state.path.length < 8) state.path = state.treeSamples.length >= 8 ? treePathFromSamples(state.treeSamples) : makeFallbackShape();
-      state.paths = state.paths.length ? state.paths.map((path) => smoothPath(path, config.smoothWindow)) : [state.path];
+      config.smoothWindow = preserveSvgGeometry ? 1 : automaticSmoothWindow(state.rawData.length, mode);
+      state.treeSamples = preserveSvgGeometry ? state.path.slice() : deterministicSample(state.path, config.sampleRatio);
+      if (!preserveSvgGeometry && state.path.length < 8) {
+        state.path = state.treeSamples.length >= 8 ? treePathFromSamples(state.treeSamples) : makeFallbackShape();
+      }
+      state.paths = preserveSvgGeometry
+        ? state.paths.map((path) => path.slice())
+        : (state.paths.length ? state.paths.map((path) => smoothPath(path, config.smoothWindow)) : [state.path]);
       state.path = state.paths[0];
-      state.simplifiedContours = simplifyContoursToPointCount(state.paths, config.simplifyPointCount, pathClosed);
+      state.simplifiedContours = preserveSvgGeometry
+        ? state.paths.map((path) => path.slice())
+        : simplifyContoursToPointCount(state.paths, config.simplifyPointCount, pathClosed);
       state.simplified = state.simplifiedContours[0] ?? [];
-      if (state.simplified.length < 8) state.simplified = state.path;
+      if (!preserveSvgGeometry && state.simplified.length < 8) state.simplified = state.path;
       state.contour = state.path;
       if (!state.simplifiedContours.length) state.simplifiedContours = [state.simplified];
       state.normalizedContours = normalizeContours(state.simplifiedContours);
@@ -3904,6 +4346,13 @@
         pointChip.textContent = `${state.neuralSystem.nodes.length} nodes`;
         rdpChip.textContent = `${state.neuralSystem.links.length} links`;
         harmonicChip.textContent = config.neuralMouseFollow ? "mouse follow" : "brownian cursor";
+        return;
+      }
+      if (config.effectType === "flow" && config.flowMode === "brush") {
+        fileChip.textContent = state.fileName;
+        pointChip.textContent = `${state.flowBrushSegments.length} brush segments`;
+        rdpChip.textContent = formatControlValue("brushOverlapMode", config.brushOverlapMode);
+        harmonicChip.textContent = `${(config.brushDurationMs / 1000).toFixed(1)}s draw`;
         return;
       }
       fileChip.textContent = state.fileName;
@@ -4048,6 +4497,22 @@
           `snap interval = ${config.neuralSnapCursor && !config.neuralMouseFollow ? formatControlValue("neuralSnapIntervalMs", config.neuralSnapIntervalMs) : "-"}`,
           `cursor speed = ${config.neuralMouseFollow ? "-" : formatControlValue("neuralCursorSpeed", config.neuralCursorSpeed)}`,
           `line width = ${formatControlValue("neuralLineWidth", config.neuralLineWidth)}`,
+        ].join("\n");
+      }
+      if (config.effectType === "flow" && config.flowMode === "brush") {
+        return [
+          "Directional gradient brush",
+          "blank -> draw paths -> hold -> fade -> blank 0.2s",
+          "each path segment receives its color from cumulative path distance",
+          "stroke stacking decides whether earlier or later drawn segments stay on top at crossings",
+          "",
+          `duration = ${(config.brushDurationMs / 1000).toFixed(2)}s`,
+          `interval = ${(config.brushIntervalMs / 1000).toFixed(2)}s`,
+          "blank = 0.20s",
+          `stroke width = ${formatControlValue("brushStrokeWidth", config.brushStrokeWidth)}`,
+          `gradient stops = ${normalizedFlowBrushStops().map((stop) => `${Math.round(stop.position * 100)}% ${colorToRgbaText(stop.color, stop.opacity)}`).join(" -> ")}`,
+          `overlap = ${formatControlValue("brushOverlapMode", config.brushOverlapMode)}`,
+          `shadow = ${formatControlValue("brushShadow", config.brushShadow)}`,
         ].join("\n");
       }
       const h = Math.round((state.coefficients.length - 1) / 2);
@@ -4389,40 +4854,71 @@
       document.body.appendChild(scratch);
       try {
         return Array.from(imported.querySelectorAll("path, polygon, polyline, line, rect, circle, ellipse"))
-          .map(sampleSvgGeometryElement)
-          .filter((entry) => entry.points.length >= 3)
-          .sort((a, b) => pathLength(b.points) - pathLength(a.points));
+          .flatMap(sampleSvgGeometryElement)
+          .filter((entry) => entry.points.length >= 3);
       } finally {
         scratch.remove();
       }
     }
 
     function sampleSvgGeometryElement(node) {
-      if (typeof node.getTotalLength !== "function" || typeof node.getPointAtLength !== "function") return { points: [], closed: false, filled: false };
+      if (typeof node.getTotalLength !== "function" || typeof node.getPointAtLength !== "function") return [];
       const style = window.getComputedStyle(node);
-      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return { points: [], closed: false, filled: false };
+      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return [];
       let length = 0;
       try {
         length = node.getTotalLength();
       } catch {
-        return { points: [], closed: false, filled: false };
+        return [];
       }
-      if (!Number.isFinite(length) || length <= 0) return { points: [], closed: false, filled: false };
+      if (!Number.isFinite(length) || length <= 0) return [];
       const tag = node.tagName.toLowerCase();
-      const closed = tag !== "line" && tag !== "polyline" && (tag !== "path" || /[zZ]/.test(node.getAttribute("d") || ""));
+      const canBeClosed = tag !== "line" && tag !== "polyline" && (tag !== "path" || /[zZ]/.test(node.getAttribute("d") || ""));
       const fillOpacity = Number(style.fillOpacity || node.getAttribute("fill-opacity") || 1);
-      const filled = closed && tag !== "polyline" && tag !== "line" && style.fill !== "none" && fillOpacity > 0;
-      const count = Math.max(12, Math.min(720, Math.ceil(length / 3)));
       const matrix = node.getCTM();
-      const points = [];
-      for (let index = 0; index < count; index += 1) {
-        const progress = closed ? index / count : index / Math.max(1, count - 1);
-        const raw = node.getPointAtLength(length * progress);
+      const matrixScale = matrix
+        ? Math.max(Math.hypot(matrix.a, matrix.b), Math.hypot(matrix.c, matrix.d), 1)
+        : 1;
+      const count = Math.max(12, Math.min(720, Math.ceil((length * matrixScale) / 1.5)));
+      const transformPoint = (raw) => {
         const point = matrix ? new DOMPoint(raw.x, raw.y).matrixTransform(matrix) : raw;
-        points.push({ x: point.x, y: point.y });
+        return { x: point.x, y: point.y };
+      };
+      const sampled = [];
+      for (let index = 0; index < count; index += 1) {
+        const position = length * (index / Math.max(1, count - 1));
+        sampled.push({ position, point: transformPoint(node.getPointAtLength(position)) });
       }
-      if (points.length > 1 && distance(points[0], points[points.length - 1]) < 0.001) points.pop();
-      return { points, closed, filled };
+      const stepDistances = sampled.slice(1)
+        .map((sample, index) => distance(sampled[index].point, sample.point))
+        .sort((a, b) => a - b);
+      const typicalStep = stepDistances[Math.floor(stepDistances.length / 2)] || 1;
+      const groups = [[]];
+      sampled.forEach((sample, index) => {
+        if (index > 0 && distance(sampled[index - 1].point, sample.point) > typicalStep * 4 + 1) {
+          let low = sampled[index - 1].position;
+          let high = sample.position;
+          const leftAnchor = sampled[index - 1].point;
+          const rightAnchor = sample.point;
+          for (let iteration = 0; iteration < 18; iteration += 1) {
+            const middle = (low + high) / 2;
+            const middlePoint = transformPoint(node.getPointAtLength(middle));
+            if (distance(middlePoint, leftAnchor) <= distance(middlePoint, rightAnchor)) low = middle;
+            else high = middle;
+          }
+          groups[groups.length - 1].push(transformPoint(node.getPointAtLength(low)));
+          groups.push([transformPoint(node.getPointAtLength(high))]);
+        }
+        groups[groups.length - 1].push(sample.point);
+      });
+      return groups
+        .filter((points) => points.length >= 3)
+        .map((points) => {
+          const closed = canBeClosed && distance(points[0], points[points.length - 1]) <= typicalStep * 1.5 + 0.001;
+          if (closed && points.length > 1) points.pop();
+          const filled = closed && tag !== "polyline" && tag !== "line" && style.fill !== "none" && fillOpacity > 0;
+          return { points, closed, filled };
+        });
     }
 
     async function loadImageFile(file) {
@@ -4431,6 +4927,7 @@
       state.fileName = file.name;
       state.usingSampleReference = false;
       state.sourceKind = isSvgFile(file) ? "svg" : "raster";
+      renderMotionControls();
       state.svgContours = [];
       state.svgContourClosed = [];
       state.svgContourFilled = [];
@@ -4534,6 +5031,9 @@
         "perspectiveIntervalMs",
         "puzzleMotionDurationMs",
         "puzzleMotionIntervalMs",
+        "brushDurationMs",
+        "brushIntervalMs",
+        "flowMode",
       ]).has(key);
     }
 
@@ -4563,6 +5063,7 @@
       lineEditPopover.hidden = true;
       hideLineEditHandles();
       config.effectType = effectType;
+      if (effectType !== "flow" && typeof hideFlowBrushGroup === "function") hideFlowBrushGroup();
       renderMotionControls();
       const effect = activeEffect();
       if (effect.hideImageOptions || effect.hasParticleKeyframes || config.effectType === "cell" || (config.effectType === "neural" && config.neuralSource !== "reference")) {
@@ -4787,6 +5288,8 @@
       if (key === "contourColor") motionPath.setAttribute("stroke", config.contourColor);
       if (key === "contourOpacity") motionPath.setAttribute("opacity", config.contourOpacity.toFixed(3));
       if (key === "pulseCycleMs" && wasPulseGapVisible !== config.pulseCycleMs > 0) renderMotionControls();
+      if (key === "flowMode") renderMotionControls();
+      if (key === "brushOverlapMode") renderMotionControls();
       if (key === "oscMode" || key === "oscRefreshMode") renderMotionControls();
       if (key === "morphMotionMode" || key === "morphRenderMode" || key === "morphStrokeMotionMode") renderMotionControls();
       if (key === "lineStyle") {
@@ -4872,13 +5375,19 @@
       const hasCellReferences = config.effectType === "cell";
       imageCard.classList.toggle("is-hidden", Boolean(effect.hideImageOptions) && !hasReferenceFrames && !hasCellReferences);
       dropzone.classList.toggle("is-hidden", Boolean(effect.hideImageOptions) || hasReferenceFrames || hasCellReferences);
-      modeTabs.hidden = hasReferenceFrames || hasCellReferences;
+      const preservesSvgGeometry = state.sourceKind === "svg" && !effect.hideImageOptions && !hasReferenceFrames && !hasCellReferences;
+      modeTabs.hidden = hasReferenceFrames || hasCellReferences || preservesSvgGeometry;
       referenceCardTitle.textContent = hasCellReferences ? "细胞参考图" : "参考图";
       imageControls.innerHTML = "";
       if (hasCellReferences) {
         renderCellReferenceEditor(imageControls);
       } else if (hasReferenceFrames) {
         renderParticleKeyframeEditor(imageControls);
+      } else if (preservesSvgGeometry) {
+        const note = document.createElement("p");
+        note.className = "svg-fidelity-note";
+        note.textContent = "SVG 原始路径已保留，不进行轮廓简化、点云抽稀或傅立叶重构。";
+        imageControls.appendChild(note);
       } else if (!effect.hideImageOptions) {
         renderControls(imageControls, imageControlDefs, handleImageControlInput);
       }
